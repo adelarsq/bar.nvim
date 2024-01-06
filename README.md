@@ -6,3 +6,15 @@
 
 A really light statusline/tabline/winbar plugin for [Neovim](https://github.com/neovim/neovim) using [Lua](https://www.lua.org).
 
+## Setup
+
+Setup with Lazy:
+
+```
+{
+    'https://github.com/adelarsq/bar.nvim',
+    config = function ()
+        require('bar').setup()
+    end
+},
+```
