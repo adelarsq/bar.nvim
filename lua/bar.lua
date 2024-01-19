@@ -7,10 +7,8 @@ local M = {}
 ------------------------------------------------------------------------
 
     vim.g.bar_none = 'none'
-    vim.g.bar_white = '#ffffff'
     vim.g.bar_red = '#ff5349' -- red orange
-    vim.g.bar_orange = '#ff9326'
-    vim.g.bar_yellow = '#fe6e00' -- blaze orange
+    vim.g.bar_orange = '#fe6e00' -- blaze orange
     vim.g.bar_green = '#4CBB17' -- color Kelly
     vim.g.bar_turquoise = '#3FE0D0'
     vim.g.bar_aqua = '#18ffe0'
@@ -20,19 +18,11 @@ local M = {}
     vim.g.bar_purple_light = '#E8DAEF'
     vim.g.bar_blue_light = '#D6EAF8'
     vim.g.bar_red_light = '#FADBD8'
-
-    -- fg and bg
-    vim.g.bar_white_fg = '#e6e6e6'
-    -- vim.g.bar_black_fg = '#282c34'
-    -- vim.g.bar_bg = '#4d4d4d'
+    vim.g.bar_black = '#282c34'
+    vim.g.bar_black2 = '#4d4d4d'
     vim.g.bar_gray = '#cccccc'
-
-    vim.g.bar_normal_fg = vim.g.bar_gray
-    vim.g.bar_normal_bg = vim.g.bar_white
-    vim.g.bar_activeline_bg = vim.g.bar_blue
-    vim.g.bar_activeline_fg = '#ffffff'
-    vim.g.bar_inactiveline_bg = '#cccccc'
-    vim.g.bar_inactiveline_fg = '#ffffff'
+    vim.g.bar_gray2 = '#e6e6e6'
+    vim.g.bar_white = '#ffffff'
 
 ------------------------------------------------------------------------
 -- Icons
@@ -238,13 +228,13 @@ end
 -- Redraw different colors for different mode
 local RedrawColors = function(mode)
     if mode == 'n' then
-        api.nvim_command('hi BarMode guibg=' .. vim.g.bar_none .. ' guifg=' .. vim.g.bar_white)
+        api.nvim_command('hi BarMode guibg=' .. vim.g.bar_blue .. ' guifg=' .. vim.g.bar_white)
     elseif mode == 'i' then
         api.nvim_command('hi BarMode guibg=' .. vim.g.bar_green .. ' guifg=' .. vim.g.bar_white)
     elseif mode == 'v' or mode == 'V' or mode == '' then
         api.nvim_command('hi BarMode guibg=' .. vim.g.bar_purple .. ' guifg=' .. vim.g.bar_white)
     elseif mode == 'c' then
-        api.nvim_command('hi BarMode guibg=' .. vim.g.bar_yellow .. ' guifg=' .. vim.g.bar_white)
+        api.nvim_command('hi BarMode guibg=' .. vim.g.bar_orange .. ' guifg=' .. vim.g.bar_white)
     elseif mode == 'Rv' then
         api.nvim_command('hi BarMode guibg=' .. vim.g.bar_red .. ' guifg=' .. vim.g.bar_white)
     elseif mode == 't' then
