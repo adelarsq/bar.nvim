@@ -12,7 +12,7 @@ Setup with Lazy:
 
 ```
 {
-    'https://github.com/adelarsq/bar.nvim',
+    'adelarsq/bar.nvim',
     config = function ()
         require('bar').setup()
     end
