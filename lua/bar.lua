@@ -6,50 +6,50 @@ local M = {}
 -- Colors
 ------------------------------------------------------------------------
 
-    vim.g.bar_none = 'none'
-    vim.g.bar_red = '#ff5349' -- red orange
-    vim.g.bar_orange = '#fe6e00' -- blaze orange
-    vim.g.bar_green = '#4CBB17' -- color Kelly
-    vim.g.bar_turquoise = '#3FE0D0'
-    vim.g.bar_aqua = '#18ffe0'
-    vim.g.bar_blue = '#31baff'
-    vim.g.bar_purple = '#9d8cff'
-    vim.g.bar_green_light = '#D5F5E3'
-    vim.g.bar_purple_light = '#E8DAEF'
-    vim.g.bar_blue_light = '#D6EAF8'
-    vim.g.bar_red_light = '#FADBD8'
-    vim.g.bar_black = '#282c34'
-    vim.g.bar_black2 = '#4d4d4d'
-    vim.g.bar_gray = '#cccccc'
-    vim.g.bar_gray2 = '#e6e6e6'
-    vim.g.bar_white = '#ffffff'
+vim.g.bar_none = 'none'
+vim.g.bar_red = '#ff5349'        -- red orange
+vim.g.bar_orange = '#fe6e00'     -- blaze orange
+vim.g.bar_green = '#4CBB17'      -- color Kelly
+vim.g.bar_turquoise = '#3FE0D0'
+vim.g.bar_aqua = '#18ffe0'
+vim.g.bar_blue = '#31baff'
+vim.g.bar_purple = '#9d8cff'
+vim.g.bar_green_light = '#D5F5E3'
+vim.g.bar_purple_light = '#E8DAEF'
+vim.g.bar_blue_light = '#D6EAF8'
+vim.g.bar_red_light = '#FADBD8'
+vim.g.bar_black = '#282c34'
+vim.g.bar_black2 = '#4d4d4d'
+vim.g.bar_gray = '#cccccc'
+vim.g.bar_gray2 = '#e6e6e6'
+vim.g.bar_white = '#ffffff'
 
 ------------------------------------------------------------------------
 -- Icons
 ------------------------------------------------------------------------
 
-    vim.g.bar_iconCwd = '🏡'
+vim.g.bar_iconCwd = '🏡'
 
-    -- LSP
-    vim.g.bar_lsp_running='🔥'
-    vim.g.bar_lsp_stoped='🧊'
+-- LSP
+vim.g.bar_lsp_running = '🔥'
+vim.g.bar_lsp_stoped = '🧊'
 
-    vim.g.bar_symbol_error = '💥'
-    vim.g.bar_symbol_warning = '💩'
-    vim.g.bar_symbol_information = '⚠️'
-    vim.g.bar_symbol_hint = '💡'
+vim.g.bar_symbol_error = '💥'
+vim.g.bar_symbol_warning = '💩'
+vim.g.bar_symbol_information = '⚠️'
+vim.g.bar_symbol_hint = '💡'
 
 ------------------------------------------------------------------------
 -- Utils
 ------------------------------------------------------------------------
 
 local Exists = function(variable)
-    local loaded = api.nvim_call_function('exists', {variable})
+    local loaded = api.nvim_call_function('exists', { variable })
     return loaded ~= 0
 end
 
 local Has = function(variable)
-    local loaded = api.nvim_call_function('has', {variable})
+    local loaded = api.nvim_call_function('has', { variable })
     return loaded ~= 0
 end
 
@@ -57,14 +57,14 @@ local Call = function(arg0, arg1)
     return api.nvim_call_function(arg0, arg1)
 end
 
-local SplitString = function(arg0,fileSeparator)
-    local arg0Split = arg0:gmatch('[^'..fileSeparator..'%s]+')
+local SplitString = function(arg0, fileSeparator)
+    local arg0Split = arg0:gmatch('[^' .. fileSeparator .. '%s]+')
 
     local pathTable = {}
     local i = 1
 
     for word in arg0Split do
-        pathTable[i]=word
+        pathTable[i] = word
         i = i + 1
     end
 
@@ -85,31 +85,31 @@ local TrimmedDirectory = function(arg0)
 
     if OnWindows() then
         fileSeparator = '\\'
-        home = 'C'..os.getenv("HOMEPATH")
+        home = 'C' .. os.getenv("HOMEPATH")
     else
         home = os.getenv("HOME")
         fileSeparator = '/'
     end
 
-    local path = string.gsub(arg0,home,"~")
+    local path = string.gsub(arg0, home, "~")
 
-    if path=="~" then
+    if path == "~" then
         return path
     end
 
-    local pathTable, pathTableSize = SplitString(path,fileSeparator)
+    local pathTable, pathTableSize = SplitString(path, fileSeparator)
 
-    local ret=''
+    local ret = ''
 
-    for j=1,pathTableSize-1,1 do
+    for j = 1, pathTableSize - 1, 1 do
         if j == 1 then
-            ret=ret..pathTable[j]:sub(1,1)
+            ret = ret .. pathTable[j]:sub(1, 1)
         else
-            ret=ret..fileSeparator
-            if j==pathTableSize-1 then
-                ret=ret..pathTable[j]
+            ret = ret .. fileSeparator
+            if j == pathTableSize - 1 then
+                ret = ret .. pathTable[j]
             else
-                ret=ret..pathTable[j]:sub(1,1)
+                ret = ret .. pathTable[j]:sub(1, 1)
             end
         end
     end
@@ -138,7 +138,7 @@ local TsStatus = function()
 end
 
 local CurrentScope = function()
-  return TsStatus()
+    return TsStatus()
 end
 
 local DebugStatus = function()
@@ -377,7 +377,7 @@ function M.activeLine(idBuffer)
     statusline = statusline .. vim.g.bar_blank
 
     -- Component: row and col
-    local line = Call('line', { "." })    
+    local line = Call('line', { "." })
     local column = Call('col', { "." })
     statusline = statusline .. "%#Normal#%{&fileencoding} "
     statusline = statusline .. vim.g.bar_blank
@@ -420,24 +420,27 @@ end
 ------------------------------------------------------------------------
 
 local abbreviate_path = function(path)
-  if path == nil then
-    return ''
-  end
-  
-  local last_name = string.match(path, "[^/\\]+$")
+    if path == nil then
+        return ''
+    end
 
-  if last_name == nil then
-    return ''
-  end
-  
-  local previous_folders = string.match(path, "^.+[\\/]")
+    local last_name = string.match(path, "[^/\\]+$")
 
-  local abbreviated_folders = ""
-  for folder in string.gmatch(previous_folders, "[^/\\]+") do
-    abbreviated_folders = abbreviated_folders .. string.sub(folder, 1, 1) .. "/"
-  end
+    if last_name == nil then
+        return ''
+    end
 
-  return abbreviated_folders .. last_name
+    local previous_folders = string.match(path, "^.+[\\/]")
+
+    local abbreviated_folders = ""
+
+    if previous_folders ~= nil then
+        for folder in string.gmatch(previous_folders, "[^/\\]+") do
+            abbreviated_folders = abbreviated_folders .. string.sub(folder, 1, 1) .. "/"
+        end
+    end
+
+    return abbreviated_folders .. last_name
 end
 
 function M.TabLine()
@@ -469,24 +472,25 @@ function M.setup(opts)
 
     local timer = vim.uv.new_timer()
 
-timer:start(100, 1000, vim.schedule_wrap(function()
-  local bufnr = vim.api.nvim_get_current_buf()
+    timer:start(100, 1000, vim.schedule_wrap(function()
+        local bufnr = vim.api.nvim_get_current_buf()
 
-  if vim.o.laststatus == 1 or vim.o.laststatus == 2 then
-    vim.wo.statusline=require'bar'.activeLine(bufnr)
-    require'bar'.UpdateInactiveWindows(bufnr)
-  end
+        if vim.o.laststatus == 1 or vim.o.laststatus == 2 then
+            vim.wo.statusline = require 'bar'.activeLine(bufnr)
+            require 'bar'.UpdateInactiveWindows(bufnr)
+        end
 
-  if vim.o.laststatus == 3 then
-    vim.wo.statusline=require'bar'.activeLine(bufnr)
-  end
+        if vim.o.laststatus == 3 then
+            vim.wo.statusline = require 'bar'.activeLine(bufnr)
+        end
 
-  if vim.g.bar_disable_tabline ~= 0 then
-    vim.o.tabline=require'bar'.TabLine() end
-end))
+        if vim.g.bar_disable_tabline ~= 0 then
+            vim.o.tabline = require 'bar'.TabLine()
+        end
+    end))
 
--- winbar
-vim.o.winbar = '%#Normal#%F'
+    -- winbar
+    vim.o.winbar = '%#Normal#%F'
 end
 
 return M
