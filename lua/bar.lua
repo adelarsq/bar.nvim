@@ -185,13 +185,27 @@ local DiagnosticStatus = function(idBuffer)
 end
 
 -- Builtin Neovim LSP
+
+local ClientsLsp = function()
+    local bufnr = vim.api.nvim_get_current_buf()
+    local clients = vim.lsp.buf_get_clients(bufnr)
+    if next(clients) == nil then
+        return ""
+    end
+    local c = {}
+    for _, client in pairs(clients) do
+        table.insert(c, client.name)
+    end
+
+    return vim.g.bar_lsp_running .. " " .. table.concat(c, "|")
+end
+
 local BuiltinLsp = function(idBuffer)
     local sl = "%#Normal#"
 
     if not vim.tbl_isempty(vim.lsp.get_clients({ bufnr = idBuffer })) then
         local error, warning, information, hint = DiagnosticStatus(idBuffer)
 
-        sl = sl .. vim.g.bar_lsp_running
         if error > 0 then
             sl = sl .. ' ' .. vim.g.bar_symbol_error
             sl = sl .. error
@@ -216,7 +230,9 @@ local BuiltinLsp = function(idBuffer)
 end
 
 local LspStatus = function(idBuffer)
-    local sl = BuiltinLsp(idBuffer)
+    local sl = ""
+    sl = sl .. ClientsLsp()
+    sl = sl .. BuiltinLsp(idBuffer)
     return sl
 end
 
