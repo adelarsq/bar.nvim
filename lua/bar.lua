@@ -431,7 +431,9 @@ function M.setup(opts)
     end))
 
     -- winbar
-    vim.o.winbar = '%#Normal#%F'
+    if not vim.g.bar_disable_winbar then
+        vim.o.winbar = '%#Normal#%F'
+    end
 end
 
 return M
