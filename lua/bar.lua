@@ -197,9 +197,11 @@ local ClientsLsp = function()
         for _, client in pairs(clients) do
             table.insert(c, client.name)
         end
+
+        return vim.g.bar_lsp_running .. " " .. table.concat(c, "|")
     end
 
-    return vim.g.bar_lsp_running .. " " .. table.concat(c, "|")
+    return vim.g.bar_lsp_running
 end
 
 local BuiltinLsp = function(idBuffer)
