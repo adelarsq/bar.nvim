@@ -7,9 +7,9 @@ local M = {}
 ------------------------------------------------------------------------
 
 vim.g.bar_none = 'none'
-vim.g.bar_red = '#ff5349'        -- red orange
-vim.g.bar_orange = '#fe6e00'     -- blaze orange
-vim.g.bar_green = '#4CBB17'      -- color Kelly
+vim.g.bar_red = '#ff5349'    -- red orange
+vim.g.bar_orange = '#fe6e00' -- blaze orange
+vim.g.bar_green = '#4CBB17'  -- color Kelly
 vim.g.bar_turquoise = '#3FE0D0'
 vim.g.bar_aqua = '#18ffe0'
 vim.g.bar_blue = '#31baff'
@@ -192,9 +192,12 @@ local ClientsLsp = function()
     if next(clients) == nil then
         return ""
     end
+
     local c = {}
-    for _, client in pairs(clients) do
-        table.insert(c, client.name)
+    if not vim.g.bar_disable_lsp_names then
+        for _, client in pairs(clients) do
+            table.insert(c, client.name)
+        end
     end
 
     return vim.g.bar_lsp_running .. " " .. table.concat(c, "|")
@@ -204,7 +207,6 @@ local BuiltinLsp = function(idBuffer)
     local sl = "%#Normal#"
 
     if not vim.tbl_isempty(vim.lsp.get_clients({ bufnr = idBuffer })) then
-
         if not vim.g.bar_disable_diagnostics then
             local error, warning, information, hint = DiagnosticStatus(idBuffer)
 
@@ -234,9 +236,7 @@ end
 
 local LspStatus = function(idBuffer)
     local sl = ""
-    if not vim.g.bar_disable_lsp_names then
-        sl = sl .. ClientsLsp()
-    end
+    sl = sl .. ClientsLsp()
     sl = sl .. BuiltinLsp(idBuffer)
     return sl
 end
