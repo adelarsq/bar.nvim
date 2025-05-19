@@ -205,7 +205,7 @@ local BuiltinLsp = function(idBuffer)
 
     if not vim.tbl_isempty(vim.lsp.get_clients({ bufnr = idBuffer })) then
 
-        if vim.g.bar_disable_diagnostics ~= 0 then
+        if not vim.g.bar_disable_diagnostics then
             local error, warning, information, hint = DiagnosticStatus(idBuffer)
 
             if error > 0 then
