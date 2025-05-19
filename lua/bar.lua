@@ -204,23 +204,26 @@ local BuiltinLsp = function(idBuffer)
     local sl = "%#Normal#"
 
     if not vim.tbl_isempty(vim.lsp.get_clients({ bufnr = idBuffer })) then
-        local error, warning, information, hint = DiagnosticStatus(idBuffer)
 
-        if error > 0 then
-            sl = sl .. ' ' .. vim.g.bar_symbol_error
-            sl = sl .. error
-        end
-        if warning > 0 then
-            sl = sl .. ' ' .. vim.g.bar_symbol_warning
-            sl = sl .. warning
-        end
-        if information > 0 then
-            sl = sl .. ' ' .. vim.g.bar_symbol_information
-            sl = sl .. information
-        end
-        if hint > 0 then
-            sl = sl .. ' ' .. vim.g.bar_symbol_hint
-            sl = sl .. hint
+        if vim.g.bar_disable_diagnostics ~= 0 then
+            local error, warning, information, hint = DiagnosticStatus(idBuffer)
+
+            if error > 0 then
+                sl = sl .. ' ' .. vim.g.bar_symbol_error
+                sl = sl .. error
+            end
+            if warning > 0 then
+                sl = sl .. ' ' .. vim.g.bar_symbol_warning
+                sl = sl .. warning
+            end
+            if information > 0 then
+                sl = sl .. ' ' .. vim.g.bar_symbol_information
+                sl = sl .. information
+            end
+            if hint > 0 then
+                sl = sl .. ' ' .. vim.g.bar_symbol_hint
+                sl = sl .. hint
+            end
         end
     else
         sl = sl .. vim.g.bar_lsp_stoped
