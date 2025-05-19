@@ -32,7 +32,6 @@ vim.g.bar_iconCwd = '🏡'
 
 -- LSP
 vim.g.bar_lsp_running = '🔥'
-vim.g.bar_lsp_stoped = '🧊'
 
 vim.g.bar_symbol_error = '💥'
 vim.g.bar_symbol_warning = '💩'
@@ -227,8 +226,6 @@ local BuiltinLsp = function(idBuffer)
                 sl = sl .. hint
             end
         end
-    else
-        sl = sl .. vim.g.bar_lsp_stoped
     end
     sl = sl .. "%#Normal#"
     return sl
