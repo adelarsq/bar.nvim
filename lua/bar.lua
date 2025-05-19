@@ -234,7 +234,9 @@ end
 
 local LspStatus = function(idBuffer)
     local sl = ""
-    sl = sl .. ClientsLsp()
+    if not vim.g.bar_disable_lsp_names then
+        sl = sl .. ClientsLsp()
+    end
     sl = sl .. BuiltinLsp(idBuffer)
     return sl
 end
