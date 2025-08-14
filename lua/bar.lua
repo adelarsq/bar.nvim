@@ -33,6 +33,9 @@ vim.g.bar_iconCwd = '🏡'
 -- LSP
 vim.g.bar_lsp_running = '🔥'
 
+-- DAP
+vim.g.bar_dap_running = '🐞'
+
 vim.g.bar_symbol_error = '💥'
 vim.g.bar_symbol_warning = '💩'
 vim.g.bar_symbol_information = '⚠️'
@@ -204,6 +207,15 @@ local ClientsLsp = function()
     return vim.g.bar_lsp_running
 end
 
+local DapRunning = function()
+    local dap = require("dap")
+    if dap.session() then
+        return vim.g.bar_dap_running
+    else
+        return ''
+    end
+end
+
 local BuiltinLsp = function(idBuffer)
     local sl = "%#Normal#"
 
@@ -316,6 +328,7 @@ function M.activeLine(idBuffer)
 
     statusline = statusline .. RunStatus()
     statusline = statusline .. LspStatus(idBuffer)
+    statusline = statusline .. DapRunning()
 
     -- Component: FileType
     statusline = statusline .. "%#Normal# " .. filetype
