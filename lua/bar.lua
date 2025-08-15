@@ -275,6 +275,50 @@ local ShowMacroRecording = function()
     end
 end
 
+local GitStatus = function()
+    local handle = io.popen('git rev-parse --is-inside-work-tree')
+    if not handle then return '' end
+    local git_dir = handle:read('*a'):gsub('%s+', '')
+    handle:close()
+
+    if git_dir ~= 'true' then
+        return ''
+    end
+
+    local branch_handle = io.popen('git branch --show-current')
+    if not branch_handle then return '' end
+    local branch = branch_handle:read('*a'):gsub('%s+', '')
+    branch_handle:close()
+
+    if branch == '' then
+        return ''
+    end
+
+    local cmd = 'git rev-list --count --left-right @{upstream}...HEAD'
+    local rev_list_handle = io.popen(cmd)
+    if not rev_list_handle then return branch end
+    local result = rev_list_handle:read('*a'):gsub('%s+$', '')
+    rev_list_handle:close()
+
+    if result == '' then
+        return branch
+    end
+
+    local behind, ahead = result:match('(%d+)%s+(%d+)')
+    ahead = tonumber(ahead) or 0
+    behind = tonumber(behind) or 0
+
+    local status = branch
+    if ahead > 0 then
+        status = status .. ' ↑' .. ahead
+    end
+    if behind > 0 then
+        status = status .. ' ↓' .. behind
+    end
+
+    return status
+end
+
 function M.activeLine(idBuffer)
     local statusline = "%#Normal#"
 
@@ -310,7 +354,8 @@ function M.activeLine(idBuffer)
 
     -- TODO move this on another module
     if Exists('b:gitsigns_head') then
-        statusline = statusline .. vim.b.gitsigns_status .. ' ' .. vim.b.gitsigns_head
+        local bar_git_status = GitStatus()
+        statusline = statusline .. vim.b.gitsigns_status .. ' ' .. bar_git_status
     end
 
     statusline = statusline .. "%{&modified?'+':''}"
