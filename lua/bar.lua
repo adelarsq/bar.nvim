@@ -275,8 +275,15 @@ local ShowMacroRecording = function()
     end
 end
 
+
 local GitStatus = function()
-    local handle = io.popen('git rev-parse --is-inside-work-tree')
+    local handle = nil
+    local is_windows = vim.fn.has('win32') == 1 or vim.fn.has('win64') == 1
+    if is_windows then
+        handle = io.popen('git rev-parse --is-inside-work-tree 2>nul')
+    else
+        handle = io.popen('git rev-parse --is-inside-work-tree 2>/dev/null')
+    end
     if not handle then return '' end
     local git_dir = handle:read('*a'):gsub('%s+', '')
     handle:close()
