@@ -41,6 +41,11 @@ vim.g.bar_symbol_warning = '💩'
 vim.g.bar_symbol_information = '⚠️'
 vim.g.bar_symbol_hint = '💡'
 
+vim.g.bar_symbol_canceled = '⛔'
+vim.g.bar_symbol_failure = '💥'
+vim.g.bar_symbol_success = '✅'
+vim.g.bar_symbol_running = '🚀'
+
 ------------------------------------------------------------------------
 -- Utils
 ------------------------------------------------------------------------
@@ -113,6 +118,39 @@ end
 ------------------------------------------------------------------------
 -- Space between components
 vim.g.bar_blank = ' '
+
+------------------------------------------------------------------------
+-- Plugins
+------------------------------------------------------------------------
+
+
+local TasksStatus = function()
+    local tasks = require("overseer.task_list").list_tasks({ unique = true })
+    local tasks_by_status = require("overseer.util").tbl_group_by(tasks, "status")
+
+    local symbols = {
+        ["CANCELED"] = vim.g.bar_symbol_canceled,
+        ["FAILURE"] = vim.g.bar_symbol_failure,
+        ["SUCCESS"] = vim.g.bar_symbol_success,
+        ["RUNNING"] = vim.g.bar_symbol_running,
+    }
+
+    local status = ''
+    if tasks_by_status["CANCELED"] then
+        status = string.format("%s%d", symbols["CANCELED"], #tasks_by_status["CANCELED"])
+    end
+    if tasks_by_status["FAILURE"] then
+        status = status .. string.format("%s%d", symbols["FAILURE"], #tasks_by_status["FAILURE"])
+    end
+    if tasks_by_status["SUCCESS"] then
+        status = status .. string.format("%s%d", symbols["SUCCESS"], #tasks_by_status["SUCCESS"])
+    end
+    if tasks_by_status["RUNNING"] then
+        status = status .. string.format("%s%d", symbols["RUNNING"], #tasks_by_status["RUNNING"])
+    end
+
+    return status
+end
 
 ------------------------------------------------------------------------
 -- StatusLine
@@ -378,6 +416,9 @@ function M.activeLine(idBuffer)
     statusline = statusline .. "%="
     statusline = statusline .. "%#Normal#"
 
+    if vim.g.bar_enable_plugin_overseer then
+        statusline = statusline .. TasksStatus()
+    end
     statusline = statusline .. RunStatus()
     statusline = statusline .. LspStatus(idBuffer)
     statusline = statusline .. DapRunning()
