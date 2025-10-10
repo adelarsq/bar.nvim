@@ -315,13 +315,15 @@ end
 
 
 local GitStatus = function()
-    local handle = nil
     local is_windows = vim.fn.has('win32') == 1 or vim.fn.has('win64') == 1
+
+    local cmd_dir = nil
     if is_windows then
-        handle = io.popen('git rev-parse --is-inside-work-tree 2>nul')
+        cmd_dir = 'git rev-parse --is-inside-work-tree 2>nul'
     else
-        handle = io.popen('git rev-parse --is-inside-work-tree 2>/dev/null')
+        cmd_dir = 'git rev-parse --is-inside-work-tree 2>/dev/null'
     end
+    local handle = io.popen(cmd_dir)
     if not handle then return '' end
     local git_dir = handle:read('*a'):gsub('%s+', '')
     handle:close()
@@ -330,7 +332,13 @@ local GitStatus = function()
         return ''
     end
 
-    local branch_handle = io.popen('git branch --show-current')
+    local branch_cmd = nil
+    if is_windows then
+        branch_cmd = 'git branch --show-current 2>nul'
+    else
+        branch_cmd = 'git branch --show-current 2>/dev/null'
+    end
+    local branch_handle = io.popen(branch_cmd)
     if not branch_handle then return '' end
     local branch = branch_handle:read('*a'):gsub('%s+', '')
     branch_handle:close()
@@ -339,7 +347,12 @@ local GitStatus = function()
         return ''
     end
 
-    local cmd = 'git rev-list --count --left-right @{upstream}...HEAD'
+    local cmd = nil
+    if is_windows then
+        cmd = 'git rev-list --count --left-right @{upstream}...HEAD 2>nul'
+    else
+        cmd = 'git rev-list --count --left-right @{upstream}...HEAD 2>/dev/null'
+    end
     local rev_list_handle = io.popen(cmd)
     if not rev_list_handle then return branch end
     local result = rev_list_handle:read('*a'):gsub('%s+$', '')
