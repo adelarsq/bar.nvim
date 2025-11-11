@@ -638,10 +638,11 @@ function M.winbar(bufnr)
         return sbar
     end
 
-    local diagnost_label = get_diagnostic_label(bufnr)
-    local scroolbar = get_scrollbar(bufnr)
+    local diagnostic_label = get_diagnostic_label(bufnr)
+    local scroolbar = '%#Normal#' .. get_scrollbar(bufnr)
+    local file_dir_abbreviate = abbreviate_path(file_dir .. filename)
 
-    return winbar .. file_dir .. filename .. ' ' ..diagnost_label .. ' ' .. scroolbar
+    return winbar .. file_dir_abbreviate .. ' ' ..diagnostic_label .. ' ' .. scroolbar
 end
 
 function M.setup(opts)
