@@ -59,6 +59,55 @@ local Call = function(arg0, arg1)
     return api.nvim_call_function(arg0, arg1)
 end
 
+-- Verify if a string is a suffix from another
+local function is_suffix(suffix, str)
+    -- Get the length of the suffix and the string
+    local suffix_len = #suffix
+    local str_len = #str
+
+    -- If the suffix is longer than the string, it can't be a suffix
+    if suffix_len > str_len then
+        return false
+    end
+
+    -- Extract the last `suffix_len` characters of the string
+    local str_suffix = string.sub(str, 1, suffix_len)
+
+    -- Compare the extracted suffix with the given suffix
+    return str_suffix == suffix
+end
+
+-- Get path relative to cwd() for the current file.
+local function get_relative_path(bufnr, filetype)
+    local file_dir = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ':p:h')
+    file_dir = vim.fn.substitute(file_dir, '\\', '/', 'g')
+
+    if filetype == 'oil' then
+        file_dir = file_dir:sub(7)
+    end
+
+    local cwd = vim.uv.cwd()
+
+    if cwd == nil then
+        return ''
+    end
+
+    cwd = vim.fn.substitute(cwd, '\\', '/', 'g')
+
+    if file_dir:sub(-1) ~= '/' then
+        file_dir = file_dir .. '/'
+    end
+    if cwd:sub(-1) ~= '/' then
+        cwd = cwd .. '/'
+    end
+
+    if is_suffix(cwd, file_dir) then
+        return file_dir:sub(cwd:len() + 1)
+    else
+        return file_dir
+    end
+end
+
 ------------------------------------------------------------------------
 -- Features
 ------------------------------------------------------------------------
@@ -507,7 +556,7 @@ local abbreviate_path = function(path)
     return abbreviated_folders .. last_name
 end
 
-function M.TabLine()
+function M.tabLine()
     local tabline = ''
     local tab_list = api.nvim_list_tabpages()
     local current_tab = api.nvim_get_current_tabpage()
@@ -531,6 +580,70 @@ function M.TabLine()
     return tabline
 end
 
+function M.winbar(bufnr)
+    local winbar = '%#Normal#'
+
+    -- local bufnr = vim.api.nvim_win_get_buf(0)
+    local filename = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ':t')
+    local filetype = vim.bo[bufnr]['filetype']
+
+    if filename == '' then
+        filename = '[No Name]'
+    end
+
+    local file_dir = get_relative_path(bufnr, filetype)
+
+    local modified = vim.bo[bufnr].modified
+
+    local function get_diagnostic_label(bufnr)
+        local icons = { error = 'e', warn = '', info = '', hint = '' }
+        local label = ''
+
+        for severity, icon in pairs(icons) do
+            local n = #vim.diagnostic.get(bufnr,
+                { severity = vim.diagnostic.severity[string.upper(severity)] })
+            if n > 0 then
+                label = label .. '%#DiagnosticSign'.. severity ..'#'
+                label = label .. icon .. n .. ''
+            end
+        end
+        return label
+    end
+
+    -- Get window id for the buffer id passed as parameter
+    local function find_window_by_bufid(bufnr)
+        for _, win in ipairs(vim.api.nvim_list_wins()) do
+            if vim.api.nvim_win_get_buf(win) == bufnr then
+                return win
+            end
+        end
+        return nil
+    end
+
+    -- Based on https://www.reddit.com/r/neovim/comments/1jogp6e/comment/mkrywdw/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button
+    local function get_scrollbar(bufnr)
+        local window_id = find_window_by_bufid(bufnr)
+        if window_id == nil then
+            return ''
+        end
+
+        local sbar_chars = { '▔', '🮂', '🮃', '▀', '▬', '▄', '▃', '▂', '▁', }
+
+        local cur_line = vim.api.nvim_win_get_cursor(window_id)[1]
+        local lines = vim.api.nvim_buf_line_count(bufnr)
+
+        local i = math.floor((cur_line - 1) / lines * #sbar_chars) + 1
+        local sbar = string.rep(sbar_chars[i], 2)
+
+        return sbar
+    end
+
+    local diagnost_label = get_diagnostic_label(bufnr)
+    local scroolbar = get_scrollbar(bufnr)
+
+    return winbar .. file_dir .. filename .. ' ' ..diagnost_label .. ' ' .. scroolbar
+end
+
 function M.setup(opts)
     opts = opts or {}
 
@@ -538,6 +651,7 @@ function M.setup(opts)
 
     timer:start(100, 1000, vim.schedule_wrap(function()
         local bufnr = vim.api.nvim_get_current_buf()
+        local winid = vim.api.nvim_get_current_win()
 
         if vim.o.laststatus == 1 or vim.o.laststatus == 2 then
             vim.wo.statusline = require 'bar'.activeLine(bufnr)
@@ -549,14 +663,13 @@ function M.setup(opts)
         end
 
         if vim.g.bar_disable_tabline ~= 0 then
-            vim.o.tabline = require 'bar'.TabLine()
+            vim.o.tabline = require 'bar'.tabLine()
+        end
+
+        if not vim.g.bar_disable_winbar then
+            vim.wo[winid].winbar = require 'bar'.winbar(bufnr)
         end
     end))
-
-    -- winbar
-    if not vim.g.bar_disable_winbar then
-        vim.o.winbar = '%#Normal#%F'
-    end
 end
 
 return M
