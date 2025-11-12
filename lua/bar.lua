@@ -654,6 +654,7 @@ function M.setup(opts)
         local bufnr = vim.api.nvim_get_current_buf()
         local winid = vim.api.nvim_get_current_win()
         local buftype = vim.bo[bufnr].buftype
+        local filetype = vim.bo[bufnr].filetype
 
         if vim.o.laststatus == 1 or vim.o.laststatus == 2 then
             vim.wo.statusline = require 'bar'.activeLine(bufnr)
@@ -669,7 +670,7 @@ function M.setup(opts)
         end
 
         if not vim.g.bar_disable_winbar then
-            if buftype ~= '' and buftype ~= 'nofile' then
+            if buftype ~= '' and buftype ~= 'nofile' and filetype ~= 'dap-view' then
                 vim.wo[winid].winbar = require 'bar'.winbar(bufnr)
             end
         end
