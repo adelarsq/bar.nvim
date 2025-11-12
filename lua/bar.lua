@@ -46,6 +46,9 @@ vim.g.bar_symbol_failure = '💥'
 vim.g.bar_symbol_success = '✅'
 vim.g.bar_symbol_running = '🚀'
 
+local excluded_buftypes = { 'nofile', 'prompt', 'terminal' }
+local excluded_filetypes = { 'dap-view', 'dap-repl', 'help', 'qf' }
+
 ------------------------------------------------------------------------
 -- Utils
 ------------------------------------------------------------------------
@@ -670,8 +673,8 @@ function M.setup(opts)
         end
 
         if not vim.g.bar_disable_winbar then
-            if (buftype == '' or buftype ~= 'nofile') and
-                filetype ~= 'dap-view' and filetype ~= 'dap-repl' then
+            if not vim.tbl_contains(excluded_buftypes, buftype) and
+                not vim.tbl_contains(excluded_filetypes, filetype) then
                vim.wo[winid].winbar = require 'bar'.winbar(bufnr)
             end
         end
