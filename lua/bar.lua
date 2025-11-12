@@ -670,7 +670,8 @@ function M.setup(opts)
         end
 
         if not vim.g.bar_disable_winbar then
-            if buftype ~= '' and buftype ~= 'nofile' and filetype ~= 'dap-view' then
+            if buftype ~= '' and buftype ~= 'nofile' and
+               filetype ~= 'dap-view' and filetype ~= 'dap-repl' then
                 vim.wo[winid].winbar = require 'bar'.winbar(bufnr)
             end
         end
