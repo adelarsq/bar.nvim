@@ -1,214 +1,214 @@
 local api = vim.api
+local uv = vim.uv
 
 local M = {}
 
 ------------------------------------------------------------------------
--- Colors
+-- Colors & Configs (Garantia de inicialização)
 ------------------------------------------------------------------------
 
-vim.g.bar_none = 'none'
-vim.g.bar_red = '#ff5349'    -- red orange
-vim.g.bar_orange = '#fe6e00' -- blaze orange
-vim.g.bar_green = '#4CBB17'  -- color Kelly
-vim.g.bar_turquoise = '#3FE0D0'
-vim.g.bar_aqua = '#18ffe0'
-vim.g.bar_blue = '#31baff'
-vim.g.bar_purple = '#9d8cff'
-vim.g.bar_green_light = '#D5F5E3'
-vim.g.bar_purple_light = '#E8DAEF'
-vim.g.bar_blue_light = '#D6EAF8'
-vim.g.bar_red_light = '#FADBD8'
-vim.g.bar_black = '#282c34'
-vim.g.bar_black2 = '#4d4d4d'
-vim.g.bar_gray = '#cccccc'
-vim.g.bar_gray2 = '#e6e6e6'
-vim.g.bar_white = '#ffffff'
+local function set_default(var, value)
+    if vim.g[var] == nil then
+        vim.g[var] = value
+    end
+end
+
+set_default('bar_blank', ' ')
+set_default('bar_none', 'none')
+set_default('bar_red', '#ff5349')
+set_default('bar_orange', '#fe6e00')
+set_default('bar_green', '#4CBB17')
+set_default('bar_turquoise', '#3FE0D0')
+set_default('bar_aqua', '#18ffe0')
+set_default('bar_blue', '#31baff')
+set_default('bar_purple', '#9d8cff')
+set_default('bar_green_light', '#D5F5E3')
+set_default('bar_purple_light', '#E8DAEF')
+set_default('bar_blue_light', '#D6EAF8')
+set_default('bar_red_light', '#FADBD8')
+set_default('bar_black', '#282c34')
+set_default('bar_black2', '#4d4d4d')
+set_default('bar_gray', '#cccccc')
+set_default('bar_gray2', '#e6e6e6')
+set_default('bar_white', '#ffffff')
 
 ------------------------------------------------------------------------
 -- Icons
 ------------------------------------------------------------------------
 
-vim.g.bar_iconCwd = '🏡'
-
--- LSP
-vim.g.bar_lsp_running = '🔥'
-
--- DAP
-vim.g.bar_dap_running = '🐞'
-
-vim.g.bar_symbol_error = '💥'
-vim.g.bar_symbol_warning = '💩'
-vim.g.bar_symbol_information = '⚠️'
-vim.g.bar_symbol_hint = '💡'
-
-vim.g.bar_symbol_canceled = '⛔'
-vim.g.bar_symbol_failure = '💥'
-vim.g.bar_symbol_success = '✅'
-vim.g.bar_symbol_running = '🚀'
+set_default('bar_iconCwd', '🏡')
+set_default('bar_lsp_running', '🔥')
+set_default('bar_dap_running', '🐞')
+set_default('bar_symbol_error', '💥')
+set_default('bar_symbol_warning', '💩')
+set_default('bar_symbol_information', '⚠️')
+set_default('bar_symbol_hint', '💡')
+set_default('bar_symbol_canceled', '⛔')
+set_default('bar_symbol_failure', '💥')
+set_default('bar_symbol_success', '✅')
+set_default('bar_symbol_running', '🚀')
 
 local excluded_buftypes = { 'nofile', 'prompt', 'terminal' }
 local excluded_filetypes = { 'dap-view', 'dap-repl', 'help', 'qf' }
 
 ------------------------------------------------------------------------
+-- Performance: Cache & Debounce
+------------------------------------------------------------------------
+
+local cache = {
+    git = { value = '', expiry = 0 },
+    lsp = { bufnr = nil, value = '', diagnostics = nil, expiry = 0 },
+    overseer = { value = '', expiry = 0 },
+    mode_colors = {},
+}
+
+local CACHE_TTL = {
+    git = 3000,      -- 3s para Git
+    lsp = 500,       -- 500ms para LSP
+    overseer = 1000, -- 1s para tarefas
+}
+
+local debounce_timer = nil
+local last_render_hash = nil
+
+local function is_cache_valid(key)
+    return cache[key].expiry and uv.now() < cache[key].expiry
+end
+
+local function set_cache(key, value, extra)
+    cache[key].value = value
+    cache[key].expiry = uv.now() + CACHE_TTL[key]
+    if extra then
+        for k, v in pairs(extra) do
+            cache[key][k] = v
+        end
+    end
+end
+
+local function debounced_update(delay, callback)
+    if debounce_timer and not debounce_timer:is_closing() then
+        debounce_timer:stop()
+    end
+    debounce_timer = uv.new_timer()
+    debounce_timer:start(delay, 0, vim.schedule_wrap(callback))
+end
+
+-- Dirty checking
+local function get_render_signature(bufnr)
+    local bo = vim.bo[bufnr]
+    local git_head = vim.b[bufnr].gitsigns_head or ''
+    local git_stats = vim.b[bufnr].gitsigns_status_dict
+    local git_sig = ''
+    if git_stats then
+        git_sig = (git_stats.added or 0) .. (git_stats.removed or 0)
+    end
+
+    return table.concat({
+        bufnr,
+        bo.modified and 'M' or '_',
+        bo.filetype,
+        git_head,
+        git_sig,
+    }, ':')
+end
+
+------------------------------------------------------------------------
 -- Utils
 ------------------------------------------------------------------------
 
-local Exists = function(variable)
-    local loaded = api.nvim_call_function('exists', { variable })
-    return loaded ~= 0
-end
-
-local Call = function(arg0, arg1)
-    return api.nvim_call_function(arg0, arg1)
-end
-
--- Verify if a string is a suffix from another
 local function is_suffix(suffix, str)
-    -- Get the length of the suffix and the string
     local suffix_len = #suffix
-    local str_len = #str
-
-    -- If the suffix is longer than the string, it can't be a suffix
-    if suffix_len > str_len then
-        return false
-    end
-
-    -- Extract the last `suffix_len` characters of the string
-    local str_suffix = string.sub(str, 1, suffix_len)
-
-    -- Compare the extracted suffix with the given suffix
-    return str_suffix == suffix
+    if suffix_len > #str then return false end
+    return string.sub(str, -suffix_len) == suffix
 end
 
--- Get path relative to cwd() for the current file.
 local function get_relative_path(bufnr, filetype)
-    local file_dir = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ':p:h')
+    local file_dir = vim.fn.fnamemodify(api.nvim_buf_get_name(bufnr), ':p:h')
     file_dir = vim.fn.substitute(file_dir, '\\', '/', 'g')
+    if filetype == 'oil' then file_dir = file_dir:sub(7) end
 
-    if filetype == 'oil' then
-        file_dir = file_dir:sub(7)
-    end
-
-    local cwd = vim.uv.cwd()
-
-    if cwd == nil then
-        return ''
-    end
-
+    local cwd = uv.cwd()
+    if not cwd then return '' end
     cwd = vim.fn.substitute(cwd, '\\', '/', 'g')
 
-    if file_dir:sub(-1) ~= '/' then
-        file_dir = file_dir .. '/'
-    end
-    if cwd:sub(-1) ~= '/' then
-        cwd = cwd .. '/'
-    end
+    if file_dir:sub(-1) ~= '/' then file_dir = file_dir .. '/' end
+    if cwd:sub(-1) ~= '/' then cwd = cwd .. '/' end
 
-    if is_suffix(cwd, file_dir) then
-        return file_dir:sub(cwd:len() + 1)
-    else
-        return file_dir
-    end
+    return is_suffix(cwd, file_dir) and file_dir:sub(#cwd + 1) or file_dir
 end
 
 ------------------------------------------------------------------------
--- Features
+-- Features (Lazy Loading)
 ------------------------------------------------------------------------
+
+local ts_available, ts_status = pcall(require, 'nvim-treesitter.statusline')
+local dap_available, dap = pcall(require, 'dap')
+local dapui_available, dapui_controls = pcall(require, 'dapui.controls')
+local overseer_available = pcall(require, 'overseer')
 
 local TsStatus = function()
-    if vim.g.bar_enable_plugins then
-        if vim.g.loaded_nvim_treesitter then
-            local use, imported = pcall(require, "nvim-treesitter.statusline")
-            if use then
-                return imported.statusline()
-            else
-                return ''
-            end
-        end
-        return ''
-    else
+    if not (vim.g.bar_enable_plugins and vim.g.loaded_nvim_treesitter and ts_available) then
         return ''
     end
-end
-
-local CurrentScope = function()
-    return TsStatus()
+    return ts_status.statusline()
 end
 
 local DebugStatus = function()
-    if vim.g.bar_enable_plugins then
-        local use, imported = pcall(require, "dap")
-        if use then
-            return imported.status()
-        else
-            return ''
-        end
-    else
+    if not (vim.g.bar_enable_plugins and dap_available and dap.session()) then
         return ''
     end
+    return dap.status()
 end
 
 local DebugControls = function()
-    if vim.g.bar_enable_plugins then
-        if DebugStatus() == '' then
-            return ''
-        end
-
-        local use, imported = pcall(require, "dapui.controls")
-        if use then
-            return imported.controls()
-        else
-            return ''
-        end
-    else
+    if not (vim.g.bar_enable_plugins and dap_available and dapui_available and DebugStatus() ~= '') then
         return ''
     end
+    return dapui_controls.controls()
 end
 
 ------------------------------------------------------------------------
--- Configs
+-- Plugins: Overseer
 ------------------------------------------------------------------------
--- Space between components
-vim.g.bar_blank = ' '
-
-------------------------------------------------------------------------
--- Plugins
-------------------------------------------------------------------------
-
 
 local TasksStatus = function()
-    local tasks = require("overseer.task_list").list_tasks({ unique = true })
-    local tasks_by_status = require("overseer.util").tbl_group_by(tasks, "status")
+    if not (vim.g.bar_enable_plugin_overseer and overseer_available) then
+        return ''
+    end
+
+    if is_cache_valid('overseer') then
+        return cache.overseer.value
+    end
+
+    local task_list = require("overseer.task_list")
+    local util = require("overseer.util")
+
+    local tasks = task_list.list_tasks({ unique = true })
+    local by_status = util.tbl_group_by(tasks, "status")
 
     local symbols = {
-        ["CANCELED"] = vim.g.bar_symbol_canceled,
-        ["FAILURE"] = vim.g.bar_symbol_failure,
-        ["SUCCESS"] = vim.g.bar_symbol_success,
-        ["RUNNING"] = vim.g.bar_symbol_running,
+        CANCELED = vim.g.bar_symbol_canceled,
+        FAILURE = vim.g.bar_symbol_failure,
+        SUCCESS = vim.g.bar_symbol_success,
+        RUNNING = vim.g.bar_symbol_running,
     }
 
-    local status = ''
-    if tasks_by_status["CANCELED"] then
-        status = string.format("%s%d", symbols["CANCELED"], #tasks_by_status["CANCELED"])
-    end
-    if tasks_by_status["FAILURE"] then
-        status = status .. string.format("%s%d", symbols["FAILURE"], #tasks_by_status["FAILURE"])
-    end
-    if tasks_by_status["SUCCESS"] then
-        status = status .. string.format("%s%d", symbols["SUCCESS"], #tasks_by_status["SUCCESS"])
-    end
-    if tasks_by_status["RUNNING"] then
-        status = status .. string.format("%s%d", symbols["RUNNING"], #tasks_by_status["RUNNING"])
+    local parts = {}
+    for _, status_key in ipairs({ "CANCELED", "FAILURE", "SUCCESS", "RUNNING" }) do
+        if by_status[status_key] then
+            table.insert(parts, symbols[status_key] .. #by_status[status_key])
+        end
     end
 
-    return status
+    local result = table.concat(parts, '')
+    set_cache('overseer', result)
+    return result
 end
 
 ------------------------------------------------------------------------
--- StatusLine
+-- StatusLine Helpers
 ------------------------------------------------------------------------
 
--- Mode Prompt Table
 local current_mode = setmetatable({
     [''] = 'V·Block',
     [''] = 'S·Block',
@@ -244,441 +244,333 @@ local current_mode = setmetatable({
     ['r?'] = 'C',
     ['!'] = 'S',
     ['t'] = 'T',
-}, {}
-)
+}, {})
 
--- Redraw different colors for different mode
-local RedrawColors = function(mode)
-    if mode == 'n' then
-        api.nvim_command('hi BarMode guibg=' .. vim.g.bar_blue .. ' guifg=' .. vim.g.bar_white)
-    elseif mode == 'i' then
-        api.nvim_command('hi BarMode guibg=' .. vim.g.bar_green .. ' guifg=' .. vim.g.bar_white)
-    elseif mode == 'v' or mode == 'V' or mode == '' then
-        api.nvim_command('hi BarMode guibg=' .. vim.g.bar_purple .. ' guifg=' .. vim.g.bar_white)
-    elseif mode == 'c' then
-        api.nvim_command('hi BarMode guibg=' .. vim.g.bar_orange .. ' guifg=' .. vim.g.bar_white)
-    elseif mode == 'Rv' then
-        api.nvim_command('hi BarMode guibg=' .. vim.g.bar_red .. ' guifg=' .. vim.g.bar_white)
-    elseif mode == 't' then
-        api.nvim_command('hi BarMode guibg=' .. vim.g.bar_turquoise .. ' guifg=' .. vim.g.bar_white)
+local function RedrawColors(mode)
+    if cache.mode_colors[mode] then return end
+
+    local colors = {
+        n = { vim.g.bar_blue, vim.g.bar_white },
+        i = { vim.g.bar_green, vim.g.bar_white },
+        v = { vim.g.bar_purple, vim.g.bar_white },
+        V = { vim.g.bar_purple, vim.g.bar_white },
+        [''] = { vim.g.bar_purple, vim.g.bar_white },
+        c = { vim.g.bar_orange, vim.g.bar_white },
+        Rv = { vim.g.bar_red, vim.g.bar_white },
+        t = { vim.g.bar_turquoise, vim.g.bar_white },
+    }
+
+    local cfg = colors[mode]
+    if cfg then
+        api.nvim_command(string.format('hi BarMode guibg=%s guifg=%s', cfg[1], cfg[2]))
+        cache.mode_colors[mode] = true
     end
 end
 
-local DiagnosticStatus = function(idBuffer)
-    local diagnostics = vim.diagnostic.get(idBuffer)
-    local count = { 0, 0, 0, 0 }
-    for _, diagnostic in ipairs(diagnostics) do
-        count[diagnostic.severity] = count[diagnostic.severity] + 1
+local function count_diagnostics(bufnr)
+    local counts = { [1] = 0, [2] = 0, [3] = 0, [4] = 0 }
+    for _, d in ipairs(vim.diagnostic.get(bufnr)) do
+        counts[d.severity] = (counts[d.severity] or 0) + 1
     end
-    return count[vim.diagnostic.severity.ERROR],
-        count[vim.diagnostic.severity.WARN],
-        count[vim.diagnostic.severity.INFO],
-        count[vim.diagnostic.severity.HINT]
+    return counts
 end
 
--- Builtin Neovim LSP
+------------------------------------------------------------------------
+-- Git Status
+------------------------------------------------------------------------
 
-local ClientsLsp = function()
-    local bufnr = vim.api.nvim_get_current_buf()
+local GitStatus = function()
+    if is_cache_valid('git') then
+        return cache.git.value
+    end
+
+    if vim.b.gitsigns_status_dict then
+        local d = vim.b.gitsigns_status_dict
+        local parts = { d.head or '' }
+        if d.added and d.added > 0 then table.insert(parts, '↑' .. d.added) end
+        if d.removed and d.removed > 0 then table.insert(parts, '↓' .. d.removed) end
+        if d.changed and d.changed > 0 then table.insert(parts, '~' .. d.changed) end
+
+        local result = table.concat(parts, ' ')
+        set_cache('git', result)
+        return result
+    end
+
+    local function safe_popen(cmd)
+        local handle = io.popen(cmd)
+        if not handle then return nil end
+        local result = handle:read('*a'):gsub('%s+', '')
+        handle:close()
+        return result
+    end
+
+    local is_git = safe_popen(vim.fn.has('win32') == 1
+        and 'git rev-parse --is-inside-work-tree 2>nul'
+        or 'git rev-parse --is-inside-work-tree 2>/dev/null')
+
+    if is_git ~= 'true' then
+        set_cache('git', '', { expiry = uv.now() + 10000 })
+        return ''
+    end
+
+    local branch = safe_popen(vim.fn.has('win32') == 1
+        and 'git branch --show-current 2>nul'
+        or 'git branch --show-current 2>/dev/null')
+
+    if not branch or branch == '' then
+        set_cache('git', '', { expiry = uv.now() + 5000 })
+        return ''
+    end
+
+    local result = branch
+    set_cache('git', result)
+    return result
+end
+
+------------------------------------------------------------------------
+-- LSP Status
+------------------------------------------------------------------------
+
+local ClientsLsp = function(bufnr)
+    bufnr = bufnr or api.nvim_get_current_buf()
+
+    if cache.lsp.bufnr == bufnr and is_cache_valid('lsp') then
+        return cache.lsp.value
+    end
+
     local clients = vim.lsp.get_clients({ bufnr = bufnr })
-    if next(clients) == nil then
-        return ""
+    if not next(clients) then
+        set_cache('lsp', '', { bufnr = bufnr })
+        return ''
     end
 
-    local c = {}
-    if not vim.g.bar_disable_lsp_names then
-        for _, client in pairs(clients) do
-            table.insert(c, client.name)
-        end
+    local result = vim.g.bar_disable_lsp_names
+        and vim.g.bar_lsp_running
+        or (vim.g.bar_lsp_running .. ' ' .. table.concat(
+            vim.tbl_map(function(c) return c.name end, clients), '|'))
 
-        return vim.g.bar_lsp_running .. " " .. table.concat(c, "|")
-    end
+    set_cache('lsp', result, { bufnr = bufnr })
+    return result
+end
 
-    return vim.g.bar_lsp_running
+local BuiltinLsp = function(bufnr)
+    if vim.g.bar_disable_diagnostics then return "%#Normal#" end
+
+    local counts = count_diagnostics(bufnr)
+    local parts = {}
+
+    if counts[1] > 0 then table.insert(parts, vim.g.bar_symbol_error .. counts[1]) end
+    if counts[2] > 0 then table.insert(parts, vim.g.bar_symbol_warning .. counts[2]) end
+    if counts[3] > 0 then table.insert(parts, vim.g.bar_symbol_information .. counts[3]) end
+    if counts[4] > 0 then table.insert(parts, vim.g.bar_symbol_hint .. counts[4]) end
+
+    return "%#Normal#" .. (next(parts) and ' ' .. table.concat(parts, ' ') or '') .. "%#Normal#"
+end
+
+local LspStatus = function(bufnr)
+    return ClientsLsp(bufnr) .. BuiltinLsp(bufnr)
 end
 
 local DapRunning = function()
-    local dap = require("dap")
-    if dap.session() then
-        return vim.g.bar_dap_running
-    else
-        return ''
-    end
+    return (dap_available and dap.session()) and vim.g.bar_dap_running or ''
 end
 
-local BuiltinLsp = function(idBuffer)
-    local sl = "%#Normal#"
-
-    if not vim.tbl_isempty(vim.lsp.get_clients({ bufnr = idBuffer })) then
-        if not vim.g.bar_disable_diagnostics then
-            local error, warning, information, hint = DiagnosticStatus(idBuffer)
-
-            if error > 0 then
-                sl = sl .. ' ' .. vim.g.bar_symbol_error
-                sl = sl .. error
-            end
-            if warning > 0 then
-                sl = sl .. ' ' .. vim.g.bar_symbol_warning
-                sl = sl .. warning
-            end
-            if information > 0 then
-                sl = sl .. ' ' .. vim.g.bar_symbol_information
-                sl = sl .. information
-            end
-            if hint > 0 then
-                sl = sl .. ' ' .. vim.g.bar_symbol_hint
-                sl = sl .. hint
-            end
-        end
-    end
-    sl = sl .. "%#Normal#"
-    return sl
-end
-
-local LspStatus = function(idBuffer)
-    local sl = ""
-    sl = sl .. ClientsLsp()
-    sl = sl .. BuiltinLsp(idBuffer)
-    return sl
-end
-
-local FilePath = function()
-    return '%f'
-end
-
-local RunStatus = function()
-    if vim.g.asyncrun_status then
-        local result = vim.g.asyncrun_status
-        if result ~= nil then
-            return result
-        end
-    end
-    return ''
-end
+------------------------------------------------------------------------
+-- StatusLine Builders
+------------------------------------------------------------------------
 
 local ShowMacroRecording = function()
-    local recording_register = vim.fn.reg_recording()
-    if recording_register == "" then
-        return ""
-    else
-        return " Recording @" .. recording_register .. " "
-    end
+    local reg = vim.fn.reg_recording()
+    return reg == '' and '' or (' Recording @' .. reg .. ' ')
 end
 
-
-local GitStatus = function()
-    local is_windows = vim.fn.has('win32') == 1 or vim.fn.has('win64') == 1
-
-    local cmd_dir = nil
-    if is_windows then
-        cmd_dir = 'git rev-parse --is-inside-work-tree 2>nul'
-    else
-        cmd_dir = 'git rev-parse --is-inside-work-tree 2>/dev/null'
-    end
-    local handle = io.popen(cmd_dir)
-    if not handle then return '' end
-    local git_dir = handle:read('*a'):gsub('%s+', '')
-    handle:close()
-
-    if git_dir ~= 'true' then
-        return ''
-    end
-
-    local branch_cmd = nil
-    if is_windows then
-        branch_cmd = 'git branch --show-current 2>nul'
-    else
-        branch_cmd = 'git branch --show-current 2>/dev/null'
-    end
-    local branch_handle = io.popen(branch_cmd)
-    if not branch_handle then return '' end
-    local branch = branch_handle:read('*a'):gsub('%s+', '')
-    branch_handle:close()
-
-    if branch == '' then
-        return ''
-    end
-
-    local cmd = nil
-    if is_windows then
-        cmd = 'git rev-list --count --left-right @{upstream}...HEAD 2>nul'
-    else
-        cmd = 'git rev-list --count --left-right @{upstream}...HEAD 2>/dev/null'
-    end
-    local rev_list_handle = io.popen(cmd)
-    if not rev_list_handle then return branch end
-    local result = rev_list_handle:read('*a'):gsub('%s+$', '')
-    rev_list_handle:close()
-
-    if result == '' then
-        return branch
-    end
-
-    local behind, ahead = result:match('(%d+)%s+(%d+)')
-    ahead = tonumber(ahead) or 0
-    behind = tonumber(behind) or 0
-
-    local status = branch
-    if ahead > 0 then
-        status = status .. ' ↑' .. ahead
-    end
-    if behind > 0 then
-        status = status .. ' ↓' .. behind
-    end
-
-    return status
-end
-
-function M.activeLine(idBuffer)
-    local statusline = "%#Normal#"
-
-    local filetype = api.nvim_buf_get_option(idBuffer, 'filetype')
-    local laststatus = api.nvim_get_option('laststatus')
-
-    local mode = api.nvim_get_mode()['mode']
+function M.activeLine(bufnr)
+    local bo = vim.bo[bufnr]
+    local mode = api.nvim_get_mode().mode
 
     RedrawColors(mode)
 
-    statusline = statusline .. "%#BarMode#" .. current_mode[mode]
-    statusline = statusline .. "%#Normal#"
-    statusline = statusline .. vim.g.bar_blank
+    -- CORREÇÃO: Fallback para bar_blank se for nil
+    local blank = vim.g.bar_blank or ' '
 
-    -- Repository Status
-    -- TODO move this on another module
+    local sl = "%#Normal%#"
+    sl = sl .. "%#BarMode#" .. (current_mode[mode] or '?') .. "%#Normal%#" .. blank
+
+    -- Git/VCS
     if vim.g.loaded_signify then
-        local repostats = Call('sy#repo#get_stats', {})
-
-        if repostats[1] > -1 then
-            statusline = statusline .. "%#BarVCSAdd#"
-            statusline = statusline .. "+" .. repostats[1]
-            statusline = statusline .. "%#BarVCSDelete#"
-            statusline = statusline .. "-" .. repostats[2]
-            statusline = statusline .. "%#BarVCSChange#"
-            statusline = statusline .. "~" .. repostats[3]
-
-            -- TODO verificar se plugin esta ativo
-            local vcsName = Call('VcsName', {})
-            statusline = statusline .. vim.g.bar_blank .. vcsName
+        local stats = api.nvim_call_function('sy#repo#get_stats', {})
+        if stats[1] > -1 then
+            sl = sl .. "%#BarVCSAdd#+" .. stats[1] .. "%#BarVCSDelete#-" .. stats[2] .. "%#BarVCSChange#~" .. stats[3]
+            local vcs = api.nvim_call_function('VcsName', {})
+            sl = sl .. blank .. vcs
         end
     end
 
-    -- TODO move this on another module
-    if Exists('b:gitsigns_head') then
-        local bar_git_status = GitStatus()
-        statusline = statusline .. vim.b.gitsigns_status .. ' ' .. bar_git_status
+    if vim.b[bufnr].gitsigns_head then
+        sl = sl .. (vim.b.gitsigns_status or '') .. ' ' .. GitStatus()
     end
 
-    statusline = statusline .. "%{&modified?'+':''}"
-
-    statusline = statusline .. ShowMacroRecording()
-
-    statusline = statusline .. "%="
-
-    statusline = statusline .. DebugStatus()
-
-    -- Alignment to left
-    statusline = statusline .. "%#Normal#"
-    statusline = statusline .. "%="
-    statusline = statusline .. "%#Normal#"
+    if bo.modified then sl = sl .. '+' end
+    sl = sl .. ShowMacroRecording() .. "%="
+    sl = sl .. DebugStatus() .. "%=%#Normal%#"
 
     if vim.g.bar_enable_plugin_overseer then
-        statusline = statusline .. TasksStatus()
+        sl = sl .. TasksStatus()
     end
-    statusline = statusline .. RunStatus()
-    statusline = statusline .. LspStatus(idBuffer)
-    statusline = statusline .. DapRunning()
 
-    -- Component: FileType
-    statusline = statusline .. "%#Normal# " .. filetype
-    statusline = statusline .. vim.g.bar_blank
+    if vim.g.asyncrun_status then
+        sl = sl .. vim.g.asyncrun_status
+    end
 
-    -- Component: row and col
-    local line = Call('line', { "." })
-    local column = Call('col', { "." })
-    statusline = statusline .. "%#Normal#%{&fileencoding} "
-    statusline = statusline .. vim.g.bar_blank
-    statusline = statusline .. line .. ":" .. column
+    sl = sl .. LspStatus(bufnr) .. DapRunning()
+    sl = sl .. "%#Normal# " .. bo.filetype .. blank
+    sl = sl .. "%#Normal#%{&fileencoding} " .. blank
+    sl = sl .. "%l:%c"
 
-    return statusline
+    return sl
 end
 
-function M.inActiveLine(idBuffer)
-    local statusline = ""
-
-    statusline = "%#Normal#" .. " "
-
-    local filetype = api.nvim_buf_get_option(idBuffer, 'filetype')
-
-    statusline = statusline .. "%#Normal# " .. FilePath()
-
-    statusline = statusline .. "%="
-    statusline = statusline .. "%#Normal#" .. " "
-
-    return statusline
+function M.inActiveLine(bufnr)
+    return "%#Normal# %#Normal# %f%=%#Normal# "
 end
 
 function M.UpdateInactiveWindows()
-    if vim.bo.buftype == 'popup' then
-        return
-    end
-
-    for n = 1, vim.fn.winnr('$') do
-        if not vim.api.nvim_win_is_valid(0) then
-            local bufferId = vim.fn.winbufnr(n)
-            local statusLine = M.inActiveLine(bufferId)
-            vim.api.nvim_win_set_var(n, '&statusline', statusLine)
+    if vim.bo.buftype == 'popup' then return end
+    local total_wins = vim.fn.winnr('$')
+    for n = 1, total_wins do
+        -- CORREÇÃO: Verificar se a janela é válida (winid > 0)
+        if api.nvim_win_is_valid(n) then
+            local bufid = vim.fn.winbufnr(n)
+            -- CORREÇÃO: Usar set_option em vez de set_var para statusline
+            api.nvim_win_set_option(n, 'statusline', M.inActiveLine(bufid))
         end
     end
 end
 
 ------------------------------------------------------------------------
---                              TabLine                               --
+-- TabLine & Winbar
 ------------------------------------------------------------------------
 
 local abbreviate_path = function(path)
-    if path == nil then
-        return ''
-    end
-
-    local last_name = string.match(path, "[^/\\]+$")
-
-    if last_name == nil then
-        return ''
-    end
-
-    local previous_folders = string.match(path, "^.+[\\/]")
-
-    local abbreviated_folders = ""
-
-    if previous_folders ~= nil then
-        for folder in string.gmatch(previous_folders, "[^/\\]+") do
-            abbreviated_folders = abbreviated_folders .. string.sub(folder, 1, 1) .. "/"
-        end
-    end
-
-    return abbreviated_folders .. last_name
+    if not path then return '' end
+    local last = string.match(path, "[^/\\]+$") or ''
+    local prev = string.match(path, "^.+[\\/]") or ''
+    local abbr = prev:gsub("[^/\\]+", function(f) return f:sub(1, 1) end)
+    return abbr .. last
 end
 
 function M.tabLine()
-    local tabline = ''
-    local tab_list = api.nvim_list_tabpages()
-    local current_tab = api.nvim_get_current_tabpage()
-    for _, val in ipairs(tab_list) do
-        local number = api.nvim_tabpage_get_number(val)
-        tabline = tabline .. "%#Normal# "
-        if val == current_tab then
-            tabline = tabline .. "%#BarMode#"
-        else
-            tabline = tabline .. "%#Normal#"
-        end
-        tabline = tabline .. number
-        tabline = tabline .. "%#Normal#" .. " "
+    local current = api.nvim_get_current_tabpage()
+    local parts = {}
+
+    for _, tab in ipairs(api.nvim_list_tabpages()) do
+        local num = api.nvim_tabpage_get_number(tab)
+        local hl = (tab == current) and "%#BarMode#" or "%#Normal#"
+        table.insert(parts, hl .. num .. "%#Normal# ")
     end
-    tabline = tabline .. "%="
 
-    tabline = tabline .. " " .. DebugControls() .. " "
-
-    tabline = tabline .. "%#Normal# " .. vim.g.bar_iconCwd .. ' ' .. abbreviate_path(vim.uv.cwd())
-
-    return tabline
+    local blank = vim.g.bar_blank or ' '
+    return "%#Normal# " .. table.concat(parts, '') .. "%=" ..
+        blank .. DebugControls() .. blank ..
+        "%#Normal# " .. vim.g.bar_iconCwd .. blank .. abbreviate_path(uv.cwd())
 end
 
 function M.winbar(bufnr)
-    local winbar = '%#Normal#'
+    local bo = vim.bo[bufnr]
+    local filename = vim.fn.fnamemodify(api.nvim_buf_get_name(bufnr), ':t')
+    if filename == '' then filename = '[No Name]' end
 
-    -- local bufnr = vim.api.nvim_win_get_buf(0)
-    local filename = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ':t')
-    local filetype = vim.bo[bufnr]['filetype']
+    local file_dir = get_relative_path(bufnr, bo.filetype)
+    local abbr = abbreviate_path(file_dir .. filename)
 
-    if filename == '' then
-        filename = '[No Name]'
+    local diag_parts = {}
+    for sev, icon in pairs({ error = 'e', warn = '', info = '', hint = '' }) do
+        local n = #vim.diagnostic.get(bufnr, { severity = vim.diagnostic.severity[sev:upper()] })
+        if n > 0 then
+            table.insert(diag_parts, "%#DiagnosticSign" .. sev .. "#" .. icon .. n)
+        end
     end
 
-    local file_dir = get_relative_path(bufnr, filetype)
-
-    local modified = vim.bo[bufnr].modified
-
-    local function get_diagnostic_label(bufnr)
-        local icons = { error = 'e', warn = '', info = '', hint = '' }
-        local label = ''
-
-        for severity, icon in pairs(icons) do
-            local n = #vim.diagnostic.get(bufnr,
-                { severity = vim.diagnostic.severity[string.upper(severity)] })
-            if n > 0 then
-                label = label .. '%#DiagnosticSign'.. severity ..'#'
-                label = label .. icon .. n .. ''
+    local function get_scrollbar()
+        for _, win in ipairs(api.nvim_list_wins()) do
+            if api.nvim_win_get_buf(win) == bufnr then
+                local cur = api.nvim_win_get_cursor(win)[1]
+                local total = api.nvim_buf_line_count(bufnr)
+                if total == 0 then return '' end
+                local chars = { '▔', '🮂', '🮃', '▀', '▬', '▄', '▃', '▂', '▁' }
+                local i = math.floor((cur - 1) / total * #chars) + 1
+                return string.rep(chars[i], 2)
             end
         end
-        return label
+        return ''
     end
 
-    -- Get window id for the buffer id passed as parameter
-    local function find_window_by_bufid(bufnr)
-        for _, win in ipairs(vim.api.nvim_list_wins()) do
-            if vim.api.nvim_win_get_buf(win) == bufnr then
-                return win
-            end
-        end
-        return nil
-    end
-
-    -- Based on https://www.reddit.com/r/neovim/comments/1jogp6e/comment/mkrywdw/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button
-    local function get_scrollbar(bufnr)
-        local window_id = find_window_by_bufid(bufnr)
-        if window_id == nil then
-            return ''
-        end
-
-        local sbar_chars = { '▔', '🮂', '🮃', '▀', '▬', '▄', '▃', '▂', '▁', }
-
-        local cur_line = vim.api.nvim_win_get_cursor(window_id)[1]
-        local lines = vim.api.nvim_buf_line_count(bufnr)
-
-        local i = math.floor((cur_line - 1) / lines * #sbar_chars) + 1
-        local sbar = string.rep(sbar_chars[i], 2)
-
-        return sbar
-    end
-
-    local diagnostic_label = get_diagnostic_label(bufnr)
-    local scroolbar = '%#Normal#' .. get_scrollbar(bufnr)
-    local file_dir_abbreviate = abbreviate_path(file_dir .. filename)
-
-    return winbar .. file_dir_abbreviate .. ' ' ..diagnostic_label .. ' ' .. scroolbar
+    return '%#Normal#' .. abbr .. ' ' .. table.concat(diag_parts, ' ') .. ' %#Normal#' .. get_scrollbar()
 end
+
+------------------------------------------------------------------------
+-- Setup
+------------------------------------------------------------------------
 
 function M.setup(opts)
     opts = opts or {}
 
-    local timer = vim.uv.new_timer()
+    if vim.o.updatetime > 500 then
+        vim.o.updatetime = 500
+    end
 
-    timer:start(100, 1000, vim.schedule_wrap(function()
-        local bufnr = vim.api.nvim_get_current_buf()
-        local winid = vim.api.nvim_get_current_win()
-        local buftype = vim.bo[bufnr].buftype
-        local filetype = vim.bo[bufnr].filetype
+    local bar_augroup = api.nvim_create_augroup('BarPlugin', { clear = true })
 
-        if vim.o.laststatus == 1 or vim.o.laststatus == 2 then
-            vim.wo.statusline = require 'bar'.activeLine(bufnr)
-            require 'bar'.UpdateInactiveWindows(bufnr)
-        end
+    local function update_bar()
+        local bufnr = api.nvim_get_current_buf()
+        local winid = api.nvim_get_current_win()
+        local bo = vim.bo[bufnr]
 
-        if vim.o.laststatus == 3 then
-            vim.wo.statusline = require 'bar'.activeLine(bufnr)
+        local sig = get_render_signature(bufnr)
+        if sig == last_render_hash then return end
+        last_render_hash = sig
+
+        if vim.o.laststatus ~= 0 then
+            vim.wo[winid].statusline = M.activeLine(bufnr)
+            if vim.o.laststatus < 3 then
+                M.UpdateInactiveWindows()
+            end
         end
 
         if vim.g.bar_disable_tabline ~= 0 then
-            vim.o.tabline = require 'bar'.tabLine()
+            vim.o.tabline = M.tabLine()
         end
 
-        if not vim.g.bar_disable_winbar then
-            if not vim.tbl_contains(excluded_buftypes, buftype) and
-                not vim.tbl_contains(excluded_filetypes, filetype) then
-               vim.wo[winid].winbar = require 'bar'.winbar(bufnr)
-            end
+        if not vim.g.bar_disable_winbar and
+            not vim.tbl_contains(excluded_buftypes, bo.buftype) and
+            not vim.tbl_contains(excluded_filetypes, bo.filetype) then
+            vim.wo[winid].winbar = M.winbar(bufnr)
         end
-    end))
+    end
+
+    api.nvim_create_autocmd({ 'CursorHold', 'CursorHoldI' }, {
+        group = bar_augroup,
+        callback = function()
+            debounced_update(30, update_bar)
+        end,
+    })
+
+    api.nvim_create_autocmd({ 'BufEnter', 'WinEnter', 'TabEnter', 'VimResized' }, {
+        group = bar_augroup,
+        callback = function()
+            last_render_hash = nil
+            update_bar()
+        end,
+    })
+
+    api.nvim_create_autocmd('BufLeave', {
+        group = bar_augroup,
+        callback = function()
+            cache.lsp.bufnr = nil
+        end,
+    })
+
+    vim.schedule(update_bar)
 end
 
 return M
