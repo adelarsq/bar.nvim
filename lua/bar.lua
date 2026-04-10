@@ -1,3 +1,4 @@
+
 local api = vim.api
 local uv = vim.uv
 
@@ -58,6 +59,7 @@ local excluded_filetypes = { 'dap-view', 'dap-repl', 'help', 'qf' }
 local cache = {
     git = { value = '', expiry = 0 },
     lsp = { bufnr = nil, value = '', diagnostics = nil, expiry = 0 },
+    lsp_progress = { value = '', expiry = 0, spinner_index = 0 },
     overseer = { value = '', expiry = 0 },
     mode_colors = {},
 }
@@ -65,10 +67,12 @@ local cache = {
 local CACHE_TTL = {
     git = 3000,      -- 3s - Git
     lsp = 500,       -- 500ms - LSP
+    lsp_progress = 200, -- 200ms - Progresso (para animação suave)
     overseer = 1000, -- 1s - tarefas
 }
 
 local debounce_timer = nil
+local spinner_timer = nil
 local last_render_hash = nil
 
 local function is_cache_valid(key)
@@ -267,7 +271,7 @@ local function RedrawColors(mode)
 
     local cfg = colors[mode]
     if cfg then
-        api.nvim_command(string.format('hi BarMode guibg=%s guifg=%s', cfg[1], cfg[2]))
+        api.nvim_set_hl(0, 'BarMode', { bg = cfg[1], fg = cfg[2] })
         cache.mode_colors[mode] = true
     end
 end
@@ -333,8 +337,96 @@ local GitStatus = function()
 end
 
 ------------------------------------------------------------------------
--- LSP Status
+-- LSP Status & Progress
 ------------------------------------------------------------------------
+
+-- Spinner characters para animação
+local SPINNER_CHARS = { '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏' }
+
+-- Função auxiliar para verificar se há progresso LSP ativo
+local function has_lsp_progress()
+    if not vim.lsp.status then
+        return false
+    end
+    
+    local status = vim.lsp.status()
+    if not status then
+        return false
+    end
+    
+    -- Compatibilidade: pode ser string (versões antigas) ou tabela (0.10+)
+    if type(status) == 'string' then
+        return #status > 0
+    elseif type(status) == 'table' then
+        return not vim.tbl_isempty(status)
+    end
+    
+    return false
+end
+
+local function get_lsp_progress()
+    if not vim.lsp.status then
+        return ''
+    end
+
+    local status = vim.lsp.status()
+    if not status then
+        return ''
+    end
+
+    -- Atualiza índice do spinner
+    cache.lsp_progress.spinner_index = (cache.lsp_progress.spinner_index % #SPINNER_CHARS) + 1
+    local spinner = SPINNER_CHARS[cache.lsp_progress.spinner_index]
+
+    -- Compatibilidade: trata string (versões antigas) e tabela (0.10+)
+    local msg = nil
+    
+    if type(status) == 'string' then
+        -- Versões antigas retornam string
+        msg = status
+    elseif type(status) == 'table' then
+        -- Versões novas retornam tabela
+        if vim.tbl_isempty(status) then
+            return ''
+        end
+        
+        -- Tenta pegar título/mensagem do primeiro cliente com progresso
+        for _, client_status in pairs(status) do
+            if client_status.title and client_status.title ~= '' then
+                msg = client_status.title
+                break
+            elseif client_status.message and client_status.message ~= '' then
+                msg = client_status.message
+                break
+            end
+        end
+    end
+
+    if not msg or msg == '' then
+        return spinner
+    end
+
+    -- Remove caracteres de controle e limpa a mensagem
+    msg = msg:gsub('%%', '%%%%'):gsub('\n', ' '):gsub('\r', '')
+    
+    -- Trunca mensagem se for muito longa
+    if #msg > 20 then
+        msg = msg:sub(1, 20) .. '...'
+    end
+
+    return spinner .. ' ' .. msg
+end
+
+local function LspProgress()
+    -- Cache de curta duração para animação suave
+    if is_cache_valid('lsp_progress') then
+        return cache.lsp_progress.value
+    end
+
+    local progress = get_lsp_progress()
+    set_cache('lsp_progress', progress)
+    return progress
+end
 
 local ClientsLsp = function(bufnr)
     bufnr = bufnr or api.nvim_get_current_buf()
@@ -373,7 +465,15 @@ local BuiltinLsp = function(bufnr)
 end
 
 local LspStatus = function(bufnr)
-    return ClientsLsp(bufnr) .. BuiltinLsp(bufnr)
+    local clients = ClientsLsp(bufnr)
+    local progress = LspProgress()
+    
+    -- Se houver progresso, mostra ao lado do ícone
+    if progress ~= '' then
+        return clients .. ' ' .. progress .. BuiltinLsp(bufnr)
+    end
+    
+    return clients .. BuiltinLsp(bufnr)
 end
 
 local DapRunning = function()
@@ -397,7 +497,7 @@ function M.activeLine(bufnr)
 
     local blank = vim.g.bar_blank or ' '
 
-    local sl = "%#Normal%#"
+    local sl = "%#Normal#%#"
     sl = sl .. "%#BarMode#" .. (current_mode[mode] or '?') .. "%#Normal%#" .. blank
 
     -- Git/VCS
@@ -552,6 +652,26 @@ function M.setup(opts)
         end
     end
 
+    -- Timer dedicado para animação do spinner LSP
+    local function start_spinner_timer()
+        if spinner_timer and not spinner_timer:is_closing() then
+            spinner_timer:stop()
+        end
+        spinner_timer = uv.new_timer()
+        spinner_timer:start(0, 100, vim.schedule_wrap(function()
+            -- Invalida cache do progresso para forçar nova animação
+            cache.lsp_progress.expiry = 0
+            -- Só atualiza a barra se houver progresso LSP ativo
+            if has_lsp_progress() then
+                local bufnr = api.nvim_get_current_buf()
+                local winid = api.nvim_get_current_win()
+                if vim.o.laststatus ~= 0 then
+                    vim.wo[winid].statusline = M.activeLine(bufnr)
+                end
+            end
+        end))
+    end
+
     api.nvim_create_autocmd({ 'RecordingEnter', 'RecordingLeave', 'ModeChanged' }, {
         group = bar_augroup,
         callback = function()
@@ -580,6 +700,11 @@ function M.setup(opts)
             cache.lsp.bufnr = nil
         end,
     })
+
+    -- Inicia timer do spinner se LSP estiver disponível
+    if vim.lsp.status then
+        start_spinner_timer()
+    end
 
     vim.schedule(update_bar)
 end
