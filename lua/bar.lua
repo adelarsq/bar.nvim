@@ -4,7 +4,7 @@ local uv = vim.uv
 local M = {}
 
 ------------------------------------------------------------------------
--- Colors & Configs (Garantia de inicialização)
+-- Colors & Configs
 ------------------------------------------------------------------------
 
 local function set_default(var, value)
@@ -63,9 +63,9 @@ local cache = {
 }
 
 local CACHE_TTL = {
-    git = 3000,      -- 3s para Git
-    lsp = 500,       -- 500ms para LSP
-    overseer = 1000, -- 1s para tarefas
+    git = 3000,      -- 3s - Git
+    lsp = 500,       -- 500ms - LSP
+    overseer = 1000, -- 1s - tarefas
 }
 
 local debounce_timer = nil
@@ -103,12 +103,17 @@ local function get_render_signature(bufnr)
         git_sig = (git_stats.added or 0) .. (git_stats.removed or 0)
     end
 
+    local mode = api.nvim_get_mode().mode
+    local recording = vim.fn.reg_recording()
+
     return table.concat({
         bufnr,
         bo.modified and 'M' or '_',
         bo.filetype,
         git_head,
         git_sig,
+        mode,
+        recording,
     }, ':')
 end
 
@@ -390,7 +395,6 @@ function M.activeLine(bufnr)
 
     RedrawColors(mode)
 
-    -- CORREÇÃO: Fallback para bar_blank se for nil
     local blank = vim.g.bar_blank or ' '
 
     local sl = "%#Normal%#"
@@ -411,6 +415,7 @@ function M.activeLine(bufnr)
     end
 
     if bo.modified then sl = sl .. '+' end
+
     sl = sl .. ShowMacroRecording() .. "%="
     sl = sl .. DebugStatus() .. "%=%#Normal%#"
 
@@ -438,10 +443,8 @@ function M.UpdateInactiveWindows()
     if vim.bo.buftype == 'popup' then return end
     local total_wins = vim.fn.winnr('$')
     for n = 1, total_wins do
-        -- CORREÇÃO: Verificar se a janela é válida (winid > 0)
         if api.nvim_win_is_valid(n) then
             local bufid = vim.fn.winbufnr(n)
-            -- CORREÇÃO: Usar set_option em vez de set_var para statusline
             api.nvim_win_set_option(n, 'statusline', M.inActiveLine(bufid))
         end
     end
@@ -515,8 +518,8 @@ end
 function M.setup(opts)
     opts = opts or {}
 
-    if vim.o.updatetime > 500 then
-        vim.o.updatetime = 500
+    if vim.o.updatetime > 100 then
+        vim.o.updatetime = 100
     end
 
     local bar_augroup = api.nvim_create_augroup('BarPlugin', { clear = true })
@@ -527,6 +530,7 @@ function M.setup(opts)
         local bo = vim.bo[bufnr]
 
         local sig = get_render_signature(bufnr)
+
         if sig == last_render_hash then return end
         last_render_hash = sig
 
@@ -548,14 +552,21 @@ function M.setup(opts)
         end
     end
 
-    api.nvim_create_autocmd({ 'CursorHold', 'CursorHoldI' }, {
+    api.nvim_create_autocmd({ 'RecordingEnter', 'RecordingLeave', 'ModeChanged' }, {
         group = bar_augroup,
         callback = function()
-            debounced_update(30, update_bar)
+            debounced_update(10, update_bar)
         end,
     })
 
-    api.nvim_create_autocmd({ 'BufEnter', 'WinEnter', 'TabEnter', 'VimResized' }, {
+    api.nvim_create_autocmd({ 'CursorHold', 'CursorHoldI' }, {
+        group = bar_augroup,
+        callback = function()
+            vim.schedule(update_bar)
+        end,
+    })
+
+    api.nvim_create_autocmd({ 'BufEnter', 'WinEnter', 'TabEnter', 'VimResized', 'BufWritePost' }, {
         group = bar_augroup,
         callback = function()
             last_render_hash = nil
