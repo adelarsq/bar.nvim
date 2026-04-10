@@ -1,4 +1,3 @@
-
 local api = vim.api
 local uv = vim.uv
 
@@ -66,6 +65,7 @@ local cache = {
 
 local CACHE_TTL = {
     git = 3000,      -- 3s - Git
+    file_git = 1000, -- 1s - Git status do arquivo
     lsp = 500,       -- 500ms - LSP
     lsp_progress = 200, -- 200ms - Progresso (para animação suave)
     overseer = 1000, -- 1s - tarefas
@@ -75,16 +75,20 @@ local debounce_timer = nil
 local spinner_timer = nil
 local last_render_hash = nil
 
-local function is_cache_valid(key)
-    return cache[key].expiry and uv.now() < cache[key].expiry
+local function is_cache_valid(cache_entry)
+    if not cache_entry then return false end
+    return cache_entry.expiry and uv.now() < cache_entry.expiry
 end
 
-local function set_cache(key, value, extra)
-    cache[key].value = value
-    cache[key].expiry = uv.now() + CACHE_TTL[key]
+local function set_cache(cache_entry, value, extra)
+    if not cache_entry then return end
+    cache_entry.value = value
+    cache_entry.expiry = uv.now() + CACHE_TTL[extra and extra.ttl_key or 'git']
     if extra then
         for k, v in pairs(extra) do
-            cache[key][k] = v
+            if k ~= 'ttl_key' then
+                cache_entry[k] = v
+            end
         end
     end
 end
@@ -100,11 +104,17 @@ end
 -- Dirty checking
 local function get_render_signature(bufnr)
     local bo = vim.bo[bufnr]
-    local git_head = vim.b[bufnr].gitsigns_head or ''
-    local git_stats = vim.b[bufnr].gitsigns_status_dict
     local git_sig = ''
-    if git_stats then
-        git_sig = (git_stats.added or 0) .. (git_stats.removed or 0)
+    
+    -- Verifica status git via comando nativo
+    local git_dir = uv.cwd() .. '/.git'
+    if uv.fs_stat(git_dir) then
+        local handle = io.popen('git status --porcelain 2>/dev/null')
+        if handle then
+            local status = handle:read('*a')
+            handle:close()
+            git_sig = #status
+        end
     end
 
     local mode = api.nvim_get_mode().mode
@@ -114,7 +124,6 @@ local function get_render_signature(bufnr)
         bufnr,
         bo.modified and 'M' or '_',
         bo.filetype,
-        git_head,
         git_sig,
         mode,
         recording,
@@ -185,7 +194,7 @@ local TasksStatus = function()
         return ''
     end
 
-    if is_cache_valid('overseer') then
+    if is_cache_valid(cache.overseer) then
         return cache.overseer.value
     end
 
@@ -210,7 +219,7 @@ local TasksStatus = function()
     end
 
     local result = table.concat(parts, '')
-    set_cache('overseer', result)
+    set_cache(cache.overseer, result, { ttl_key = 'overseer' })
     return result
 end
 
@@ -285,54 +294,149 @@ local function count_diagnostics(bufnr)
 end
 
 ------------------------------------------------------------------------
--- Git Status
+-- Git Status (Nativo - sem plugins)
 ------------------------------------------------------------------------
 
+local function exec_git_command(cmd)
+    local handle = io.popen(cmd)
+    if not handle then return nil end
+    local result = handle:read('*a'):gsub('%s+$', '')
+    handle:close()
+    return result
+end
+
+-- Obtém o status do branch (commits ahead/behind)
+local function get_branch_status()
+    local branch = exec_git_command('git branch --show-current 2>/dev/null')
+    if not branch or branch == '' then
+        return nil, nil, nil
+    end
+
+    -- Verifica se tem upstream configurado
+    local upstream = exec_git_command('git rev-parse --abbrev-ref @{upstream} 2>/dev/null')
+    if not upstream or upstream == '' then
+        return branch, 0, 0
+    end
+
+    -- Conta commits ahead e behind
+    local ahead = exec_git_command('git rev-list --count @{upstream}..HEAD 2>/dev/null')
+    local behind = exec_git_command('git rev-list --count HEAD..@{upstream} 2>/dev/null')
+    
+    local ahead_count = tonumber(ahead) or 0
+    local behind_count = tonumber(behind) or 0
+    
+    return branch, ahead_count, behind_count
+end
+
+-- Obtém o status do arquivo atual (linhas alteradas)
+local function get_file_git_status(filepath)
+    if not filepath or filepath == '' then
+        return 0, 0, 0
+    end
+
+    -- Obtém diff do arquivo
+    local diff = exec_git_command('git diff --numstat ' .. vim.fn.shellescape(filepath) .. ' 2>/dev/null')
+    local added, removed = 0, 0
+    
+    if diff and diff ~= '' then
+        -- Parse do numstat: "added\tremoved\tfilename"
+        local num_added, num_removed = diff:match('^(%d+)%s+(%d+)')
+        added = tonumber(num_added) or 0
+        removed = tonumber(num_removed) or 0
+    end
+    
+    -- Obtém diff de arquivos unstaged
+    local staged_diff = exec_git_command('git diff --cached --numstat ' .. vim.fn.shellescape(filepath) .. ' 2>/dev/null')
+    local staged_added, staged_removed = 0, 0
+    
+    if staged_diff and staged_diff ~= '' then
+        local num_added, num_removed = staged_diff:match('^(%d+)%s+(%d+)')
+        staged_added = tonumber(num_added) or 0
+        staged_removed = tonumber(num_removed) or 0
+    end
+    
+    -- Total de alterações
+    local total_added = added + staged_added
+    local total_removed = removed + staged_removed
+    local total_changed = total_added + total_removed
+    
+    return total_changed, total_added, total_removed
+end
+
 local GitStatus = function()
-    if is_cache_valid('git') then
+    if is_cache_valid(cache.git) then
         return cache.git.value
     end
 
-    if vim.b.gitsigns_status_dict then
-        local d = vim.b.gitsigns_status_dict
-        local parts = { d.head or '' }
-        if d.added and d.added > 0 then table.insert(parts, '↑' .. d.added) end
-        if d.removed and d.removed > 0 then table.insert(parts, '↓' .. d.removed) end
-        if d.changed and d.changed > 0 then table.insert(parts, '~' .. d.changed) end
-
-        local result = table.concat(parts, ' ')
-        set_cache('git', result)
-        return result
-    end
-
-    local function safe_popen(cmd)
-        local handle = io.popen(cmd)
-        if not handle then return nil end
-        local result = handle:read('*a'):gsub('%s+', '')
-        handle:close()
-        return result
-    end
-
-    local is_git = safe_popen(vim.fn.has('win32') == 1
-        and 'git rev-parse --is-inside-work-tree 2>nul'
-        or 'git rev-parse --is-inside-work-tree 2>/dev/null')
-
+    -- Verifica se está em um repositório git
+    local is_git = exec_git_command('git rev-parse --is-inside-work-tree 2>/dev/null')
     if is_git ~= 'true' then
-        set_cache('git', '', { expiry = uv.now() + 10000 })
+        set_cache(cache.git, '', { ttl_key = 'git', expiry = uv.now() + 10000 })
         return ''
     end
 
-    local branch = safe_popen(vim.fn.has('win32') == 1
-        and 'git branch --show-current 2>nul'
-        or 'git branch --show-current 2>/dev/null')
-
+    -- Obtém status do branch
+    local branch, ahead, behind = get_branch_status()
     if not branch or branch == '' then
-        set_cache('git', '', { expiry = uv.now() + 5000 })
+        -- Tenta obter o commit hash se estiver em detached HEAD
+        branch = exec_git_command('git rev-parse --short HEAD 2>/dev/null')
+        if not branch or branch == '' then
+            set_cache(cache.git, '', { ttl_key = 'git', expiry = uv.now() + 5000 })
+            return ''
+        end
+        ahead, behind = 0, 0
+    end
+
+    -- Constrói o resultado
+    local parts = { branch }
+    
+    -- Adiciona indicadores de ahead/behind
+    if ahead > 0 then
+        table.insert(parts, '↑' .. ahead)
+    end
+    if behind > 0 then
+        table.insert(parts, '↓' .. behind)
+    end
+
+    local result = table.concat(parts, ' ')
+    set_cache(cache.git, result, { ttl_key = 'git' })
+    return result
+end
+
+-- Status específico do arquivo atual
+local FileGitStatus = function(bufnr)
+    local filepath = api.nvim_buf_get_name(bufnr)
+    if not filepath or filepath == '' then
         return ''
     end
 
-    local result = branch
-    set_cache('git', result)
+    -- Cache específico para o arquivo
+    local cache_key = 'file_git_' .. bufnr
+    if not cache[cache_key] then
+        cache[cache_key] = { value = '', expiry = 0 }
+    end
+    
+    if is_cache_valid(cache[cache_key]) then
+        return cache[cache_key].value
+    end
+
+    -- Verifica se está em um repositório git
+    local is_git = exec_git_command('git rev-parse --is-inside-work-tree 2>/dev/null')
+    if is_git ~= 'true' then
+        set_cache(cache[cache_key], '', { ttl_key = 'file_git', expiry = uv.now() + 10000 })
+        return ''
+    end
+
+    local changed, added, removed = get_file_git_status(filepath)
+    
+    if changed == 0 then
+        set_cache(cache[cache_key], '', { ttl_key = 'file_git' })
+        return ''
+    end
+
+    -- Formato: ~C+A-C (C = total de alterações, A = adicionadas, R = removidas)
+    local result = string.format('~%d+%d-%d', changed, added, removed)
+    set_cache(cache[cache_key], result, { ttl_key = 'file_git' })
     return result
 end
 
@@ -419,25 +523,25 @@ end
 
 local function LspProgress()
     -- Cache de curta duração para animação suave
-    if is_cache_valid('lsp_progress') then
+    if is_cache_valid(cache.lsp_progress) then
         return cache.lsp_progress.value
     end
 
     local progress = get_lsp_progress()
-    set_cache('lsp_progress', progress)
+    set_cache(cache.lsp_progress, progress, { ttl_key = 'lsp_progress' })
     return progress
 end
 
 local ClientsLsp = function(bufnr)
     bufnr = bufnr or api.nvim_get_current_buf()
 
-    if cache.lsp.bufnr == bufnr and is_cache_valid('lsp') then
+    if cache.lsp.bufnr == bufnr and is_cache_valid(cache.lsp) then
         return cache.lsp.value
     end
 
     local clients = vim.lsp.get_clients({ bufnr = bufnr })
     if not next(clients) then
-        set_cache('lsp', '', { bufnr = bufnr })
+        set_cache(cache.lsp, '', { ttl_key = 'lsp', bufnr = bufnr })
         return ''
     end
 
@@ -446,7 +550,7 @@ local ClientsLsp = function(bufnr)
         or (vim.g.bar_lsp_running .. ' ' .. table.concat(
             vim.tbl_map(function(c) return c.name end, clients), '|'))
 
-    set_cache('lsp', result, { bufnr = bufnr })
+    set_cache(cache.lsp, result, { ttl_key = 'lsp', bufnr = bufnr })
     return result
 end
 
@@ -497,21 +601,19 @@ function M.activeLine(bufnr)
 
     local blank = vim.g.bar_blank or ' '
 
-    local sl = "%#Normal#%#"
-    sl = sl .. "%#BarMode#" .. (current_mode[mode] or '?') .. "%#Normal%#" .. blank
+    -- CORREÇÃO: Removido "%#Normal#%#" extra que estava causando o problema
+    local sl = "%#BarMode#" .. (current_mode[mode] or '?') .. "%#Normal#" .. blank
 
-    -- Git/VCS
-    if vim.g.loaded_signify then
-        local stats = api.nvim_call_function('sy#repo#get_stats', {})
-        if stats[1] > -1 then
-            sl = sl .. "%#BarVCSAdd#+" .. stats[1] .. "%#BarVCSDelete#-" .. stats[2] .. "%#BarVCSChange#~" .. stats[3]
-            local vcs = api.nvim_call_function('VcsName', {})
-            sl = sl .. blank .. vcs
-        end
+    -- Git branch com ahead/behind
+    local git_status = GitStatus()
+    if git_status ~= '' then
+        sl = sl .. git_status .. blank
     end
 
-    if vim.b[bufnr].gitsigns_head then
-        sl = sl .. (vim.b.gitsigns_status or '') .. ' ' .. GitStatus()
+    -- Status do arquivo atual (~C+A-B)
+    local file_git = FileGitStatus(bufnr)
+    if file_git ~= '' then
+        sl = sl .. file_git .. blank
     end
 
     if bo.modified then sl = sl .. '+' end
@@ -690,6 +792,12 @@ function M.setup(opts)
         group = bar_augroup,
         callback = function()
             last_render_hash = nil
+            -- Invalida cache do arquivo ao trocar de buffer
+            for k, _ in pairs(cache) do
+                if k:match('^file_git_') then
+                    cache[k] = nil
+                end
+            end
             update_bar()
         end,
     })
