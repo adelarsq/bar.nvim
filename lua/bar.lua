@@ -63,6 +63,9 @@ local cache = {
     mode_colors = {},
 }
 
+-- Cache para nomes customizados das tabs
+local tab_names = {}
+
 local CACHE_TTL = {
     git = 3000,      -- 3s - Git
     file_git = 1000, -- 1s - Git status do arquivo
@@ -444,68 +447,65 @@ end
 -- LSP Status & Progress
 ------------------------------------------------------------------------
 
+------------------------------------------------------------------------
+-- LSP Status & Progress
+------------------------------------------------------------------------
+
 -- Spinner characters para animação
 local SPINNER_CHARS = { '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏' }
+local LSP_DONE_ICON = '✓'
 
--- Função auxiliar para verificar se há progresso LSP ativo
-local function has_lsp_progress()
-    if not vim.lsp.status then
-        return false
-    end
-    
-    local status = vim.lsp.status()
-    if not status then
-        return false
-    end
-    
-    -- Compatibilidade: pode ser string (versões antigas) ou tabela (0.10+)
-    if type(status) == 'string' then
-        return #status > 0
-    elseif type(status) == 'table' then
-        return not vim.tbl_isempty(status)
-    end
-    
-    return false
-end
+-- Estado para progresso LSP via eventos
+local lsp_progress_state = {
+    active = false,
+    message = nil,
+    client_name = nil,
+    percentage = nil,
+}
+
+-- Estado para manter o ícone de done
+local lsp_done_state = {
+    active = false,
+    client_name = nil,
+    expiry = 0,
+}
 
 local function get_lsp_progress()
-    if not vim.lsp.status then
-        return ''
+    -- Mantém o ícone de done se ainda estiver no tempo
+    if lsp_done_state.active then
+        if uv.now() < lsp_done_state.expiry then
+            return LSP_DONE_ICON .. (lsp_done_state.client_name and ' ' .. lsp_done_state.client_name or '')
+        else
+            lsp_done_state.active = false
+        end
     end
-
-    local status = vim.lsp.status()
-    if not status then
+    
+    -- Se não há progresso ativo, retorna vazio
+    if not lsp_progress_state.active then
         return ''
     end
 
     -- Atualiza índice do spinner
     cache.lsp_progress.spinner_index = (cache.lsp_progress.spinner_index % #SPINNER_CHARS) + 1
     local spinner = SPINNER_CHARS[cache.lsp_progress.spinner_index]
-
-    -- Compatibilidade: trata string (versões antigas) e tabela (0.10+)
-    local msg = nil
     
-    if type(status) == 'string' then
-        -- Versões antigas retornam string
-        msg = status
-    elseif type(status) == 'table' then
-        -- Versões novas retornam tabela
-        if vim.tbl_isempty(status) then
-            return ''
+    local msg = lsp_progress_state.message
+    local percentage = lsp_progress_state.percentage
+    
+    -- Se tem porcentagem, mostra
+    if percentage then
+        if percentage >= 100 then
+            -- Progresso completo - ativa done state
+            lsp_done_state.active = true
+            lsp_done_state.client_name = lsp_progress_state.client_name
+            lsp_done_state.expiry = uv.now() + 3000
+            lsp_progress_state.active = false
+            return LSP_DONE_ICON .. (lsp_progress_state.client_name and ' ' .. lsp_progress_state.client_name or '')
         end
-        
-        -- Tenta pegar título/mensagem do primeiro cliente com progresso
-        for _, client_status in pairs(status) do
-            if client_status.title and client_status.title ~= '' then
-                msg = client_status.title
-                break
-            elseif client_status.message and client_status.message ~= '' then
-                msg = client_status.message
-                break
-            end
-        end
+        msg = (msg and msg ~= '') and msg or (percentage .. '%%')
     end
-
+    
+    -- Se não houver mensagem, mostra só o spinner
     if not msg or msg == '' then
         return spinner
     end
@@ -522,7 +522,6 @@ local function get_lsp_progress()
 end
 
 local function LspProgress()
-    -- Cache de curta duração para animação suave
     if is_cache_valid(cache.lsp_progress) then
         return cache.lsp_progress.value
     end
@@ -664,20 +663,66 @@ local abbreviate_path = function(path)
     return abbr .. last
 end
 
+-- Função para obter o nome da tab (customizado ou padrão)
+local function get_tab_name(tab)
+    local tab_id = tostring(tab)
+    local custom_name = tab_names[tab_id]
+    
+    if custom_name then
+        return custom_name
+    end
+    
+    -- Nome padrão: número da tab
+    return tostring(api.nvim_tabpage_get_number(tab))
+end
+
 function M.tabLine()
     local current = api.nvim_get_current_tabpage()
     local parts = {}
 
     for _, tab in ipairs(api.nvim_list_tabpages()) do
-        local num = api.nvim_tabpage_get_number(tab)
+        local name = get_tab_name(tab)
         local hl = (tab == current) and "%#BarMode#" or "%#Normal#"
-        table.insert(parts, hl .. num .. "%#Normal# ")
+        table.insert(parts, hl .. " " .. name .. " " .. "%#Normal#")
     end
 
     local blank = vim.g.bar_blank or ' '
     return "%#Normal# " .. table.concat(parts, '') .. "%=" ..
         blank .. DebugControls() .. blank ..
         "%#Normal# " .. vim.g.bar_iconCwd .. blank .. abbreviate_path(uv.cwd())
+end
+
+-- Função para renomear a tab atual
+function M.rename_tab()
+    local current_tab = api.nvim_get_current_tabpage()
+    local tab_id = tostring(current_tab)
+    local current_name = tab_names[tab_id] or tostring(api.nvim_tabpage_get_number(current_tab))
+    
+    vim.ui.input({
+        prompt = "New tab name: ",
+        default = current_name,
+    }, function(input)
+        if input and input ~= "" then
+            tab_names[tab_id] = input
+        else
+            tab_names[tab_id] = nil
+        end
+        -- Atualiza a tabline
+        if vim.g.bar_disable_tabline ~= 0 then
+            vim.o.tabline = M.tabLine()
+        end
+    end)
+end
+
+-- Função para limpar o nome customizado da tab atual
+function M.reset_tab_name()
+    local current_tab = api.nvim_get_current_tabpage()
+    local tab_id = tostring(current_tab)
+    tab_names[tab_id] = nil
+    -- Atualiza a tabline
+    if vim.g.bar_disable_tabline ~= 0 then
+        vim.o.tabline = M.tabLine()
+    end
 end
 
 function M.winbar(bufnr)
@@ -754,17 +799,62 @@ function M.setup(opts)
         end
     end
 
-    -- Timer dedicado para animação do spinner LSP
+    -- Captura eventos de progresso LSP
+    api.nvim_create_autocmd('LspProgress', {
+        group = bar_augroup,
+        callback = function(args)
+            local data = args.data
+            if not data or not data.params then
+                return
+            end
+            
+            local value = data.params.value
+            if not value then
+                return
+            end
+            
+            local client = vim.lsp.get_client_by_id(data.client_id)
+            local client_name = client and client.name or 'LSP'
+            
+            if value.kind == 'begin' then
+                -- Progresso iniciou
+                lsp_progress_state.active = true
+                lsp_progress_state.client_name = client_name
+                lsp_progress_state.message = value.message or value.title
+                lsp_progress_state.percentage = value.percentage
+            elseif value.kind == 'report' then
+                -- Progresso em andamento
+                lsp_progress_state.active = true
+                lsp_progress_state.client_name = client_name
+                lsp_progress_state.message = value.message or value.title
+                lsp_progress_state.percentage = value.percentage
+            elseif value.kind == 'end' then
+                -- Progresso terminou
+                lsp_done_state.active = true
+                lsp_done_state.client_name = client_name
+                lsp_done_state.expiry = uv.now() + 3000
+                lsp_progress_state.active = false
+            end
+            
+            -- Força atualização da barra
+            local bufnr = api.nvim_get_current_buf()
+            local winid = api.nvim_get_current_win()
+            if vim.o.laststatus ~= 0 then
+                vim.wo[winid].statusline = M.activeLine(bufnr)
+            end
+        end,
+    })
+
+    -- Inicia timer do spinner para animação
     local function start_spinner_timer()
         if spinner_timer and not spinner_timer:is_closing() then
             spinner_timer:stop()
         end
         spinner_timer = uv.new_timer()
         spinner_timer:start(0, 100, vim.schedule_wrap(function()
-            -- Invalida cache do progresso para forçar nova animação
             cache.lsp_progress.expiry = 0
-            -- Só atualiza a barra se houver progresso LSP ativo
-            if has_lsp_progress() then
+            -- Atualiza a barra se houver progresso ativo ou done state
+            if lsp_progress_state.active or lsp_done_state.active then
                 local bufnr = api.nvim_get_current_buf()
                 local winid = api.nvim_get_current_win()
                 if vim.o.laststatus ~= 0 then
@@ -808,6 +898,29 @@ function M.setup(opts)
             cache.lsp.bufnr = nil
         end,
     })
+
+    -- Atualiza tabline quando uma tab é fechada
+    api.nvim_create_autocmd('TabClosed', {
+        group = bar_augroup,
+        callback = function(args)
+            local closed_tab = args.tabpage
+            if closed_tab then
+                tab_names[tostring(closed_tab)] = nil
+            end
+            if vim.g.bar_disable_tabline ~= 0 then
+                vim.o.tabline = M.tabLine()
+            end
+        end,
+    })
+
+    -- Comandos para renomear tabs
+    vim.api.nvim_create_user_command('TabRename', function()
+        M.rename_tab()
+    end, {})
+
+    vim.api.nvim_create_user_command('TabRenameReset', function()
+        M.reset_tab_name()
+    end, {})
 
     -- Inicia timer do spinner se LSP estiver disponível
     if vim.lsp.status then
