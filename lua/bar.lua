@@ -79,14 +79,24 @@ local spinner_timer = nil
 local last_render_hash = nil
 
 local function is_cache_valid(cache_entry)
-    if not cache_entry then return false end
-    return cache_entry.expiry and uv.now() < cache_entry.expiry
+    if not cache_entry then
+        return false
+    end
+    if not cache_entry.expiry then
+        return false
+    end
+    return uv.now() < cache_entry.expiry
 end
 
 local function set_cache(cache_entry, value, extra)
     if not cache_entry then return end
     cache_entry.value = value
-    cache_entry.expiry = uv.now() + CACHE_TTL[extra and extra.ttl_key or 'git']
+
+    local ttl_key = (extra and extra.ttl_key) or 'git'
+    local ttl = CACHE_TTL[ttl_key] or CACHE_TTL.git
+
+    cache_entry.expiry = uv.now() + ttl
+
     if extra then
         for k, v in pairs(extra) do
             if k ~= 'ttl_key' then
@@ -108,7 +118,7 @@ end
 local function get_render_signature(bufnr)
     local bo = vim.bo[bufnr]
     local git_sig = ''
-    
+
     -- Verifica status git via comando nativo
     local git_dir = uv.cwd() .. '/.git'
     if uv.fs_stat(git_dir) then
@@ -146,7 +156,10 @@ end
 local function get_relative_path(bufnr, filetype)
     local file_dir = vim.fn.fnamemodify(api.nvim_buf_get_name(bufnr), ':p:h')
     file_dir = vim.fn.substitute(file_dir, '\\', '/', 'g')
-    if filetype == 'oil' then file_dir = file_dir:sub(7) end
+
+    if filetype == 'oil' and type(file_dir) == 'string' then
+        file_dir = file_dir:sub(7)
+    end
 
     local cwd = uv.cwd()
     if not cwd then return '' end
@@ -162,17 +175,9 @@ end
 -- Features (Lazy Loading)
 ------------------------------------------------------------------------
 
-local ts_available, ts_status = pcall(require, 'nvim-treesitter.statusline')
 local dap_available, dap = pcall(require, 'dap')
 local dapui_available, dapui_controls = pcall(require, 'dapui.controls')
 local overseer_available = pcall(require, 'overseer')
-
-local TsStatus = function()
-    if not (vim.g.bar_enable_plugins and vim.g.loaded_nvim_treesitter and ts_available) then
-        return ''
-    end
-    return ts_status.statusline()
-end
 
 local DebugStatus = function()
     if not (vim.g.bar_enable_plugins and dap_available and dap.session()) then
@@ -268,8 +273,6 @@ local current_mode = setmetatable({
 }, {})
 
 local function RedrawColors(mode)
-    if cache.mode_colors[mode] then return end
-
     local colors = {
         n = { vim.g.bar_blue, vim.g.bar_white },
         i = { vim.g.bar_green, vim.g.bar_white },
@@ -277,15 +280,17 @@ local function RedrawColors(mode)
         V = { vim.g.bar_purple, vim.g.bar_white },
         [''] = { vim.g.bar_purple, vim.g.bar_white },
         c = { vim.g.bar_orange, vim.g.bar_white },
-        Rv = { vim.g.bar_red, vim.g.bar_white },
+        R = { vim.g.bar_red, vim.g.bar_white },
         t = { vim.g.bar_turquoise, vim.g.bar_white },
     }
 
-    local cfg = colors[mode]
-    if cfg then
-        api.nvim_set_hl(0, 'BarMode', { bg = cfg[1], fg = cfg[2] })
-        cache.mode_colors[mode] = true
-    end
+    local cfg = colors[mode] or colors.n
+
+    api.nvim_set_hl(0, 'BarMode', {
+        bg = cfg[1],
+        fg = cfg[2],
+        bold = true,
+    })
 end
 
 local function count_diagnostics(bufnr)
@@ -324,10 +329,10 @@ local function get_branch_status()
     -- Conta commits ahead e behind
     local ahead = exec_git_command('git rev-list --count @{upstream}..HEAD 2>/dev/null')
     local behind = exec_git_command('git rev-list --count HEAD..@{upstream} 2>/dev/null')
-    
+
     local ahead_count = tonumber(ahead) or 0
     local behind_count = tonumber(behind) or 0
-    
+
     return branch, ahead_count, behind_count
 end
 
@@ -340,29 +345,29 @@ local function get_file_git_status(filepath)
     -- Obtém diff do arquivo
     local diff = exec_git_command('git diff --numstat ' .. vim.fn.shellescape(filepath) .. ' 2>/dev/null')
     local added, removed = 0, 0
-    
+
     if diff and diff ~= '' then
         -- Parse do numstat: "added\tremoved\tfilename"
         local num_added, num_removed = diff:match('^(%d+)%s+(%d+)')
         added = tonumber(num_added) or 0
         removed = tonumber(num_removed) or 0
     end
-    
+
     -- Obtém diff de arquivos unstaged
     local staged_diff = exec_git_command('git diff --cached --numstat ' .. vim.fn.shellescape(filepath) .. ' 2>/dev/null')
     local staged_added, staged_removed = 0, 0
-    
+
     if staged_diff and staged_diff ~= '' then
         local num_added, num_removed = staged_diff:match('^(%d+)%s+(%d+)')
         staged_added = tonumber(num_added) or 0
         staged_removed = tonumber(num_removed) or 0
     end
-    
+
     -- Total de alterações
     local total_added = added + staged_added
     local total_removed = removed + staged_removed
     local total_changed = total_added + total_removed
-    
+
     return total_changed, total_added, total_removed
 end
 
@@ -392,7 +397,7 @@ local GitStatus = function()
 
     -- Constrói o resultado
     local parts = { branch }
-    
+
     -- Adiciona indicadores de ahead/behind
     if ahead > 0 then
         table.insert(parts, '↑' .. ahead)
@@ -418,7 +423,7 @@ local FileGitStatus = function(bufnr)
     if not cache[cache_key] then
         cache[cache_key] = { value = '', expiry = 0 }
     end
-    
+
     if is_cache_valid(cache[cache_key]) then
         return cache[cache_key].value
     end
@@ -431,7 +436,7 @@ local FileGitStatus = function(bufnr)
     end
 
     local changed, added, removed = get_file_git_status(filepath)
-    
+
     if changed == 0 then
         set_cache(cache[cache_key], '', { ttl_key = 'file_git' })
         return ''
@@ -479,7 +484,7 @@ local function get_lsp_progress()
             lsp_done_state.active = false
         end
     end
-    
+
     -- Se não há progresso ativo, retorna vazio
     if not lsp_progress_state.active then
         return ''
@@ -488,10 +493,10 @@ local function get_lsp_progress()
     -- Atualiza índice do spinner
     cache.lsp_progress.spinner_index = (cache.lsp_progress.spinner_index % #SPINNER_CHARS) + 1
     local spinner = SPINNER_CHARS[cache.lsp_progress.spinner_index]
-    
+
     local msg = lsp_progress_state.message
     local percentage = lsp_progress_state.percentage
-    
+
     -- Se tem porcentagem, mostra
     if percentage then
         if percentage >= 100 then
@@ -504,7 +509,7 @@ local function get_lsp_progress()
         end
         msg = (msg and msg ~= '') and msg or (percentage .. '%%')
     end
-    
+
     -- Se não houver mensagem, mostra só o spinner
     if not msg or msg == '' then
         return spinner
@@ -512,7 +517,7 @@ local function get_lsp_progress()
 
     -- Remove caracteres de controle e limpa a mensagem
     msg = msg:gsub('%%', '%%%%'):gsub('\n', ' '):gsub('\r', '')
-    
+
     -- Trunca mensagem se for muito longa
     if #msg > 20 then
         msg = msg:sub(1, 20) .. '...'
@@ -570,12 +575,12 @@ end
 local LspStatus = function(bufnr)
     local clients = ClientsLsp(bufnr)
     local progress = LspProgress()
-    
+
     -- Se houver progresso, mostra ao lado do ícone
     if progress ~= '' then
         return clients .. ' ' .. progress .. BuiltinLsp(bufnr)
     end
-    
+
     return clients .. BuiltinLsp(bufnr)
 end
 
@@ -646,7 +651,7 @@ function M.UpdateInactiveWindows()
     for n = 1, total_wins do
         if api.nvim_win_is_valid(n) then
             local bufid = vim.fn.winbufnr(n)
-            api.nvim_win_set_option(n, 'statusline', M.inActiveLine(bufid))
+            vim.wo[n].statusline = M.inActiveLine(bufid)
         end
     end
 end
@@ -667,11 +672,11 @@ end
 local function get_tab_name(tab)
     local tab_id = tostring(tab)
     local custom_name = tab_names[tab_id]
-    
+
     if custom_name then
         return custom_name
     end
-    
+
     -- Nome padrão: número da tab
     return tostring(api.nvim_tabpage_get_number(tab))
 end
@@ -697,7 +702,7 @@ function M.rename_tab()
     local current_tab = api.nvim_get_current_tabpage()
     local tab_id = tostring(current_tab)
     local current_name = tab_names[tab_id] or tostring(api.nvim_tabpage_get_number(current_tab))
-    
+
     vim.ui.input({
         prompt = "New tab name: ",
         default = current_name,
@@ -807,15 +812,15 @@ function M.setup(opts)
             if not data or not data.params then
                 return
             end
-            
+
             local value = data.params.value
             if not value then
                 return
             end
-            
+
             local client = vim.lsp.get_client_by_id(data.client_id)
             local client_name = client and client.name or 'LSP'
-            
+
             if value.kind == 'begin' then
                 -- Progresso iniciou
                 lsp_progress_state.active = true
@@ -835,7 +840,7 @@ function M.setup(opts)
                 lsp_done_state.expiry = uv.now() + 3000
                 lsp_progress_state.active = false
             end
-            
+
             -- Força atualização da barra
             local bufnr = api.nvim_get_current_buf()
             local winid = api.nvim_get_current_win()
@@ -864,7 +869,15 @@ function M.setup(opts)
         end))
     end
 
-    api.nvim_create_autocmd({ 'RecordingEnter', 'RecordingLeave', 'ModeChanged' }, {
+    api.nvim_create_autocmd('ModeChanged', {
+        group = bar_augroup,
+        callback = function()
+            last_render_hash = nil
+            update_bar()
+        end,
+    })
+
+    api.nvim_create_autocmd({ 'RecordingEnter', 'RecordingLeave' }, {
         group = bar_augroup,
         callback = function()
             debounced_update(10, update_bar)
@@ -923,7 +936,7 @@ function M.setup(opts)
     end, {})
 
     -- Inicia timer do spinner se LSP estiver disponível
-    if vim.lsp.status then
+    if vim.lsp and vim.lsp.get_clients then
         start_spinner_timer()
     end
 
