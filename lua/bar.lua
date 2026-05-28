@@ -67,11 +67,11 @@ local cache = {
 local tab_names = {}
 
 local CACHE_TTL = {
-    git = 3000,      -- 3s - Git
-    file_git = 1000, -- 1s - Git status do arquivo
-    lsp = 500,       -- 500ms - LSP
+    git = 3000,         -- 3s - Git
+    file_git = 1000,    -- 1s - Git status do arquivo
+    lsp = 500,          -- 500ms - LSP
     lsp_progress = 200, -- 200ms - Progresso (para animação suave)
-    overseer = 1000, -- 1s - tarefas
+    overseer = 1000,    -- 1s - tarefas
 }
 
 local debounce_timer = nil
@@ -316,140 +316,6 @@ local function exec_git_command(cmd)
     return result
 end
 
--- Obtém o status do branch (commits ahead/behind)
-local function get_branch_status()
-    local branch = exec_git_command('git branch --show-current 2>/dev/null')
-    if not branch or branch == '' then
-        return nil, nil, nil
-    end
-
-    -- Verifica se tem upstream configurado
-    local upstream = exec_git_command('git rev-parse --abbrev-ref @{upstream} 2>/dev/null')
-    if not upstream or upstream == '' then
-        return branch, 0, 0
-    end
-
-    -- Conta commits ahead e behind
-    local ahead = exec_git_command('git rev-list --count @{upstream}..HEAD 2>/dev/null')
-    local behind = exec_git_command('git rev-list --count HEAD..@{upstream} 2>/dev/null')
-
-    local ahead_count = tonumber(ahead) or 0
-    local behind_count = tonumber(behind) or 0
-
-    return branch, ahead_count, behind_count
-end
-
--- Obtém o status completo do arquivo e repositório
-local function get_file_git_status(filepath)
-    if not filepath or filepath == '' then
-        return 0, 0, 0, 0, 0, 0, 0
-    end
-
-    -- Obtém diff do arquivo (unstaged) - usa --word-diff-regex ou parse melhor
-    local diff = exec_git_command('git diff --numstat ' .. vim.fn.shellescape(filepath) .. ' 2>/dev/null')
-    local added, removed = 0, 0
-
-    if diff and diff ~= '' then
-        local num_added, num_removed = diff:match('^(%d+)%s+(%d+)')
-        added = tonumber(num_added) or 0
-        removed = tonumber(num_removed) or 0
-    end
-
-    -- Obtém diff de arquivos staged
-    local staged_diff = exec_git_command('git diff --cached --numstat ' .. vim.fn.shellescape(filepath) .. ' 2>/dev/null')
-    local staged_added, staged_removed = 0, 0
-
-    if staged_diff and staged_diff ~= '' then
-        local num_added, num_removed = staged_diff:match('^(%d+)%s+(%d+)')
-        staged_added = tonumber(num_added) or 0
-        staged_removed = tonumber(num_removed) or 0
-    end
-
-    -- Total de alterações no arquivo atual
-    local total_added = added + staged_added
-    local total_removed = removed + staged_removed
-    
-    -- CORREÇÃO: Para git diff --numstat:
-    -- - Linha adicionada = 1 added, 0 removed
-    -- - Linha removida = 0 added, 1 removed  
-    -- - Linha modificada = 1 added, 1 removed
-    -- Então:
-    -- total_changed = min(added, removed)  (linhas modificadas)
-    -- net_added = max(0, added - removed)  (linhas adicionadas líquidas)
-    -- net_removed = max(0, removed - added) (linhas removidas líquidas)
-    
-    local total_changed = math.min(total_added, total_removed)
-    local net_added = math.max(0, total_added - total_removed)
-    local net_removed = math.max(0, total_removed - total_added)
-
-    -- Obtém quantidade de commits ahead/behind
-    local ahead, behind = 0, 0
-    local upstream = exec_git_command('git rev-parse --abbrev-ref @{upstream} 2>/dev/null')
-    if upstream and upstream ~= '' then
-        local ahead_str = exec_git_command('git rev-list --count @{upstream}..HEAD 2>/dev/null')
-        local behind_str = exec_git_command('git rev-list --count HEAD..@{upstream} 2>/dev/null')
-        ahead = tonumber(ahead_str) or 0
-        behind = tonumber(behind_str) or 0
-    end
-
-    -- Obtém quantidade de arquivos unstaged (modificados, mas não adicionados)
-    local unstaged_files = 0
-    local unstaged_status = exec_git_command('git ls-files --modified --exclude-standard 2>/dev/null')
-    if unstaged_status and unstaged_status ~= '' then
-        unstaged_files = #vim.split(unstaged_status:gsub('\n$', ''), '\n')
-    end
-
-    -- Obtém quantidade de arquivos staged (adicionados ao índice)
-    local staged_files = 0
-    local staged_status = exec_git_command('git diff --cached --name-only 2>/dev/null')
-    if staged_status and staged_status ~= '' then
-        staged_files = #vim.split(staged_status:gsub('\n$', ''), '\n')
-    end
-
-    return total_changed, net_added, net_removed, ahead, behind, unstaged_files, staged_files
-end
-
--- Status do branch
-local GitStatus = function()
-    if is_cache_valid(cache.git) then
-        return cache.git.value
-    end
-
-    -- Verifica se está em um repositório git
-    local is_git = exec_git_command('git rev-parse --is-inside-work-tree 2>/dev/null')
-    if is_git ~= 'true' then
-        set_cache(cache.git, '', { ttl_key = 'git', expiry = uv.now() + 10000 })
-        return ''
-    end
-
-    -- Obtém status do branch
-    local branch, ahead, behind = get_branch_status()
-    if not branch or branch == '' then
-        -- Tenta obter o commit hash se estiver em detached HEAD
-        branch = exec_git_command('git rev-parse --short HEAD 2>/dev/null')
-        if not branch or branch == '' then
-            set_cache(cache.git, '', { ttl_key = 'git', expiry = uv.now() + 5000 })
-            return ''
-        end
-        ahead, behind = 0, 0
-    end
-
-    -- Constrói o resultado
-    local parts = { branch }
-
-    -- Adiciona indicadores de ahead/behind
-    if ahead > 0 then
-        table.insert(parts, '↑' .. ahead)
-    end
-    if behind > 0 then
-        table.insert(parts, '↓' .. behind)
-    end
-
-    local result = table.concat(parts, ' ')
-    set_cache(cache.git, result, { ttl_key = 'git' })
-    return result
-end
-
 -- Status específico do arquivo atual e repositório (formato ~C+A-R^AvBuUsSt)
 local FileGitStatus = function(bufnr)
     local filepath = api.nvim_buf_get_name(bufnr)
@@ -480,11 +346,11 @@ local FileGitStatus = function(bufnr)
         if not output or output == '' then
             return 0, 0
         end
-        
+
         -- Pode vir múltiplas linhas, soma todas
         local total_added = 0
         local total_removed = 0
-        
+
         for line in output:gmatch('[^\r\n]+') do
             local added, removed = line:match('^(%d+)%s+(%d+)')
             if added and removed then
@@ -492,19 +358,20 @@ local FileGitStatus = function(bufnr)
                 total_removed = total_removed + tonumber(removed)
             end
         end
-        
+
         return total_added, total_removed
     end
 
     -- Obtém stats do arquivo
     local shell_filepath = vim.fn.shellescape(filepath)
     local unstaged_added, unstaged_removed = get_diff_stats('git diff --numstat ' .. shell_filepath .. ' 2>/dev/null')
-    local staged_added, staged_removed = get_diff_stats('git diff --cached --numstat ' .. shell_filepath .. ' 2>/dev/null')
-    
+    local staged_added, staged_removed = get_diff_stats('git diff --cached --numstat ' ..
+    shell_filepath .. ' 2>/dev/null')
+
     -- Total
     local total_added = unstaged_added + staged_added
     local total_removed = unstaged_removed + staged_removed
-    
+
     -- Cálculo correto para git diff --numstat:
     -- - Linha adicionada: +1, -0
     -- - Linha removida: +0, -1
@@ -514,13 +381,13 @@ local FileGitStatus = function(bufnr)
     -- modified = min(added, removed)  (linhas que foram ambas add e remove = modificadas)
     -- net_added = max(0, added - removed)  (linhas apenas adicionadas)
     -- net_removed = max(0, removed - added) (linhas apenas removidas)
-    
+
     local modified = math.min(total_added, total_removed)
     local net_added = math.max(0, total_added - total_removed)
     local net_removed = math.max(0, total_removed - total_added)
-    
+
     -- DEBUG: Descomente para verificar os valores
-    -- vim.notify(string.format('file: %s\nadded: %d, removed: %d\nmodified: %d, net_added: %d, net_removed: %d', 
+    -- vim.notify(string.format('file: %s\nadded: %d, removed: %d\nmodified: %d, net_added: %d, net_removed: %d',
     --    vim.fn.fnamemodify(filepath, ':t'), total_added, total_removed, modified, net_added, net_removed), vim.log.levels.INFO)
 
     -- Obtém commits ahead/behind
@@ -571,7 +438,7 @@ local FileGitStatus = function(bufnr)
             table.insert(commit_parts, 'B' .. behind)
         end
         if #commit_parts > 0 then
-            table.insert(result_parts, '^' .. table.concat(commit_parts, 'v'))
+            table.insert(result_parts, '↑' .. table.concat(commit_parts, '↓'))
         end
     end
 
@@ -746,12 +613,6 @@ function M.activeLine(bufnr)
     local blank = vim.g.bar_blank or ' '
 
     local sl = "%#BarMode#" .. (current_mode[mode] or '?') .. "%#Normal#" .. blank
-
-    -- Git branch com ahead/behind
-    local git_status = GitStatus()
-    if git_status ~= '' then
-        sl = sl .. git_status .. blank
-    end
 
     -- Status do arquivo atual (~C+A-R^AvBuUsSt)
     local file_git = FileGitStatus(bufnr)
