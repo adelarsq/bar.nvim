@@ -615,9 +615,11 @@ function M.activeLine(bufnr)
     local sl = "%#BarMode#" .. (current_mode[mode] or '?') .. "%#Normal#" .. blank
 
     -- Status do arquivo atual (~C+A-R^AvBuUsSt)
-    local file_git = FileGitStatus(bufnr)
-    if file_git ~= '' then
-        sl = sl .. file_git .. blank
+    if vim.g.bar_enable_git_status then
+        local file_git = FileGitStatus(bufnr)
+        if file_git ~= '' then
+            sl = sl .. file_git .. blank
+        end
     end
 
     if bo.modified then sl = sl .. '+' end
