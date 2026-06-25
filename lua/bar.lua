@@ -239,40 +239,40 @@ end
 ------------------------------------------------------------------------
 
 local current_mode = setmetatable({
-    [''] = 'V·Block',
-    [''] = 'S·Block',
-    ['n'] = 'N',
-    ['no'] = 'O',
-    ['nov'] = 'O',
-    ['noV'] = 'O',
-    ['niI'] = 'N',
-    ['niR'] = 'N',
-    ['niV'] = 'N',
-    ['nt'] = 'N',
-    ['v'] = 'V',
-    ['vs'] = 'V',
-    ['V'] = 'V',
-    ['Vs'] = 'V',
-    ['s'] = 'S',
-    ['S'] = 'S',
-    [''] = 'S',
-    ['i'] = 'I',
-    ['ic'] = 'I',
-    ['ix'] = 'I',
-    ['R'] = 'R',
-    ['Rc'] = 'R',
-    ['Rx'] = 'R',
-    ['Rv'] = 'R',
-    ['Rvc'] = 'R',
-    ['Rvx'] = 'R',
-    ['c'] = 'C',
-    ['cv'] = 'EX',
-    ['ce'] = 'EX',
-    ['r'] = 'R',
-    ['rm'] = 'M',
-    ['r?'] = 'C',
-    ['!'] = 'S',
-    ['t'] = 'T',
+    [''] = 'Visual Block',
+    [''] = 'Select Block',
+    ['n'] = 'Normal',
+    ['no'] = 'Operator Pending',
+    ['nov'] = 'Operator Pending',
+    ['noV'] = 'Operator Pending',
+    ['niI'] = 'Normal',
+    ['niR'] = 'Normal',
+    ['niV'] = 'Normal',
+    ['nt'] = 'Normal',
+    ['v'] = 'Visual',
+    ['vs'] = 'Visual',
+    ['V'] = 'Visual Line',
+    ['Vs'] = 'Visual Line',
+    ['s'] = 'Select',
+    ['S'] = 'Select Line',
+    [''] = 'Select',
+    ['i'] = 'Insert',
+    ['ic'] = 'Insert',
+    ['ix'] = 'Insert',
+    ['R'] = 'Replace',
+    ['Rc'] = 'Replace',
+    ['Rx'] = 'Replace',
+    ['Rv'] = 'Replace',
+    ['Rvc'] = 'Replace',
+    ['Rvx'] = 'Replace',
+    ['c'] = 'Command',
+    ['cv'] = 'Ex',
+    ['ce'] = 'Ex',
+    ['r'] = 'Prompt',
+    ['rm'] = 'More',
+    ['r?'] = 'Confirm',
+    ['!'] = 'Shell',
+    ['t'] = 'Terminal',
 }, {})
 
 local function RedrawColors(mode)
@@ -637,8 +637,8 @@ function M.activeLine(bufnr)
 
     sl = sl .. LspStatus(bufnr) .. DapRunning()
     sl = sl .. "%#Normal# " .. bo.filetype .. blank
-    sl = sl .. "%#Normal#%{&fileencoding} " .. blank
-    sl = sl .. "%l:%c"
+    sl = sl .. "%#Normal#%{&fileencoding}" .. blank
+    sl = sl .. "%l:%L/%c:%v"
 
     return sl
 end
@@ -681,6 +681,44 @@ local function get_tab_name(tab)
 
     -- Nome padrão: número da tab
     return tostring(api.nvim_tabpage_get_number(tab))
+end
+
+local function normalize_path(path)
+  return path:gsub("\\", "/")
+end
+
+local function get_relative_path_from_cwd(full_path)
+  if not full_path or full_path == "" then
+    return ""
+  end
+
+  local dir = vim.fn.fnamemodify(full_path, ":h")
+  local filename = vim.fn.fnamemodify(full_path, ":t")
+
+  local cwd = uv.cwd()
+  local cwd_norm = normalize_path(cwd)
+  local dir_norm = normalize_path(dir)
+
+  -- Garante que ambos terminem com "/"
+  cwd_norm = cwd_norm:gsub("/*$", "") .. "/"
+  dir_norm = dir_norm:gsub("/*$", "") .. "/"
+
+  -- Se o diretório começar com o cwd, remove essa parte
+  if dir_norm:sub(1, #cwd_norm) == cwd_norm then
+    local relative_dir = dir_norm:sub(#cwd_norm + 1)
+    relative_dir = relative_dir:gsub("^/", "")  -- remove barra inicial se houver
+    relative_dir = relative_dir:gsub("/*$", "") -- remove barras finais
+
+    -- Se o diretório relativo ficar vazio, retorna só o nome do arquivo
+    if relative_dir == "" then
+      return filename
+    end
+    -- Junta diretório relativo + nome do arquivo
+    return relative_dir .. "/" .. filename
+  end
+
+  -- Caso contrário, retorna o caminho completo normalizado
+  return dir_norm:gsub("/*$", "") .. "/" .. filename
 end
 
 function M.tabLine()
@@ -734,11 +772,12 @@ end
 
 function M.winbar(bufnr)
     local bo = vim.bo[bufnr]
-    local filename = vim.fn.fnamemodify(api.nvim_buf_get_name(bufnr), ':t')
+    local full_path = api.nvim_buf_get_name(bufnr)
+    local filename = vim.fn.fnamemodify(full_path, ':t')
     if filename == '' then filename = '[No Name]' end
 
-    local file_dir = get_relative_path(bufnr, bo.filetype)
-    local abbr = abbreviate_path(file_dir .. filename)
+    local relative_part = get_relative_path_from_cwd(full_path)
+    local abbr = abbreviate_path(relative_part)
 
     local diag_parts = {}
     for sev, icon in pairs({ error = 'e', warn = '', info = '', hint = '' }) do
