@@ -174,6 +174,40 @@ local function get_relative_path(bufnr, filetype)
     return is_suffix(cwd, file_dir) and file_dir:sub(#cwd + 1) or file_dir
 end
 
+local function jump_status()
+  local jumplist = vim.fn.getjumplist()
+  local jumps = jumplist[1]   -- lista de saltos
+  local cur_idx = jumplist[2] -- índice atual no jumplist
+
+  -- Índices começam em 1 em Lua, então ajustamos para algo mais intuitivo
+  local current_jump = cur_idx
+
+  -- Quantidade de saltos anteriores disponíveis (equivale ao que <C-o> pode voltar)
+  local prev_count = cur_idx - 1
+
+  -- Quantidade de saltos que pode avançar (equivale ao que <C-i> pode avançar)
+  local next_count = #jumps - cur_idx
+
+  return string.format("%d-%d-%d", prev_count, current_jump, next_count)
+end
+
+local function undo_status()
+  local ut = vim.fn.undotree()
+  local seq_cur = ut.seq_cur
+  local seq_last = ut.seq_last
+
+  -- Índice da ação atual
+  local current_action = seq_cur
+
+  -- Quantidade de ações anteriores que podem ser desfeitas (u)
+  local prev_count = seq_cur - 1
+
+  -- Quantidade de ações que podem ser refeitas (C-r)
+  local next_count = seq_last - seq_cur
+
+  return string.format("%d-%d-%d", prev_count, current_action, next_count)
+end
+
 ------------------------------------------------------------------------
 -- Features (Lazy Loading)
 ------------------------------------------------------------------------
@@ -316,6 +350,35 @@ local function exec_git_command(cmd)
     return result
 end
 
+-- Cache específico para ahead/behind (parte pesada: commits)
+local ahead_behind_cache = {}
+
+local function get_ahead_behind()
+    local now = uv.now()
+    local cache_key = 'ahead_behind'
+
+    if ahead_behind_cache[cache_key] and ahead_behind_cache[cache_key].expiry > now then
+        return ahead_behind_cache[cache_key].ahead, ahead_behind_cache[cache_key].behind
+    end
+
+    local ahead, behind = 0, 0
+    local upstream = exec_git_command('git rev-parse --abbrev-ref @{upstream} 2>/dev/null')
+    if upstream and upstream ~= '' then
+        local ahead_str = exec_git_command('git rev-list --count @{upstream}..HEAD 2>/dev/null')
+        local behind_str = exec_git_command('git rev-list --count HEAD..@{upstream} 2>/dev/null')
+        ahead = tonumber(ahead_str) or 0
+        behind = tonumber(behind_str) or 0
+    end
+
+    ahead_behind_cache[cache_key] = {
+        ahead = ahead,
+        behind = behind,
+        expiry = now + 60000 -- 60 segundos
+    }
+
+    return ahead, behind
+end
+
 -- Status específico do arquivo atual e repositório (formato ~C+A-R^AvBuUsSt)
 local FileGitStatus = function(bufnr)
     local filepath = api.nvim_buf_get_name(bufnr)
@@ -323,7 +386,7 @@ local FileGitStatus = function(bufnr)
         return ''
     end
 
-    -- Cache específico para o arquivo
+    -- Cache específico para o arquivo (status geral)
     local cache_key = 'file_git_' .. bufnr
     if not cache[cache_key] then
         cache[cache_key] = { value = '', expiry = 0 }
@@ -347,7 +410,6 @@ local FileGitStatus = function(bufnr)
             return 0, 0
         end
 
-        -- Pode vir múltiplas linhas, soma todas
         local total_added = 0
         local total_removed = 0
 
@@ -368,37 +430,12 @@ local FileGitStatus = function(bufnr)
     local staged_added, staged_removed = get_diff_stats('git diff --cached --numstat ' ..
     shell_filepath .. ' 2>/dev/null')
 
-    -- Total
     local total_added = unstaged_added + staged_added
     local total_removed = unstaged_removed + staged_removed
-
-    -- Cálculo correto para git diff --numstat:
-    -- - Linha adicionada: +1, -0
-    -- - Linha removida: +0, -1
-    -- - Linha modificada: +1, -1
-    --
-    -- Fórmula:
-    -- modified = min(added, removed)  (linhas que foram ambas add e remove = modificadas)
-    -- net_added = max(0, added - removed)  (linhas apenas adicionadas)
-    -- net_removed = max(0, removed - added) (linhas apenas removidas)
 
     local modified = math.min(total_added, total_removed)
     local net_added = math.max(0, total_added - total_removed)
     local net_removed = math.max(0, total_removed - total_added)
-
-    -- DEBUG: Descomente para verificar os valores
-    -- vim.notify(string.format('file: %s\nadded: %d, removed: %d\nmodified: %d, net_added: %d, net_removed: %d',
-    --    vim.fn.fnamemodify(filepath, ':t'), total_added, total_removed, modified, net_added, net_removed), vim.log.levels.INFO)
-
-    -- Obtém commits ahead/behind
-    local ahead, behind = 0, 0
-    local upstream = exec_git_command('git rev-parse --abbrev-ref @{upstream} 2>/dev/null')
-    if upstream and upstream ~= '' then
-        local ahead_str = exec_git_command('git rev-list --count @{upstream}..HEAD 2>/dev/null')
-        local behind_str = exec_git_command('git rev-list --count HEAD..@{upstream} 2>/dev/null')
-        ahead = tonumber(ahead_str) or 0
-        behind = tonumber(behind_str) or 0
-    end
 
     -- Obtém quantidade de arquivos unstaged
     local unstaged_files = 0
@@ -414,6 +451,9 @@ local FileGitStatus = function(bufnr)
         staged_files = #vim.split(staged_status:gsub('\n$', ''), '\n')
     end
 
+    -- Obtém ahead/behind (parte pesada, com cache de 1 minuto)
+    local ahead, behind = get_ahead_behind()
+
     -- Se não há nenhuma alteração, retorna vazio
     if modified == 0 and net_added == 0 and net_removed == 0 and ahead == 0 and behind == 0 and unstaged_files == 0 and staged_files == 0 then
         set_cache(cache[cache_key], '', { ttl_key = 'file_git' })
@@ -428,7 +468,7 @@ local FileGitStatus = function(bufnr)
         table.insert(result_parts, string.format('~%d+%d-%d', modified, net_added, net_removed))
     end
 
-    -- Parte de commits: ^AvBu
+    -- Parte de commits: ^AvBu (agora vem do cache separado)
     if ahead > 0 or behind > 0 then
         local commit_parts = {}
         if ahead > 0 then
@@ -614,15 +654,20 @@ function M.activeLine(bufnr)
 
     local sl = "%#BarMode#" .. (current_mode[mode] or '?') .. "%#Normal#" .. blank
 
+    sl = sl .. ' ' .. jump_status() .. blank
+
+    if not vim.tbl_contains(excluded_buftypes, bo.buftype) then
+        sl = sl .. '󰕌 ' .. undo_status() .. blank
+        if bo.modified then sl = sl .. '%#ErrorMsg#' .. ' ' .. '%#Normal#' .. blank end
+    end
+
     -- Status do arquivo atual (~C+A-R^AvBuUsSt)
     if vim.g.bar_enable_git_status then
         local file_git = FileGitStatus(bufnr)
         if file_git ~= '' then
-            sl = sl .. file_git .. blank
+            sl = sl .. ' ' .. file_git .. blank
         end
     end
-
-    if bo.modified then sl = sl .. '+' end
 
     sl = sl .. ShowMacroRecording() .. "%="
     sl = sl .. DebugStatus() .. "%=%#Normal%#"
@@ -780,7 +825,7 @@ function M.winbar(bufnr)
     local abbr = abbreviate_path(relative_part)
 
     local diag_parts = {}
-    for sev, icon in pairs({ error = 'e', warn = '', info = '', hint = '' }) do
+    for sev, icon in pairs({ error = vim.g.bar_symbol_error, warn = vim.g.bar_symbol_warning, info = vim.g.bar_symbol_information, hint = vim.g.bar_symbol_hint}) do
         local n = #vim.diagnostic.get(bufnr, { severity = vim.diagnostic.severity[sev:upper()] })
         if n > 0 then
             table.insert(diag_parts, "%#DiagnosticSign" .. sev .. "#" .. icon .. n)
