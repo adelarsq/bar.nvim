@@ -486,10 +486,10 @@ local FileGitStatus = function(bufnr)
     if unstaged_files > 0 or staged_files > 0 then
         local file_parts = {}
         if unstaged_files > 0 then
-            table.insert(file_parts, 'U' .. unstaged_files)
+            table.insert(file_parts, '' .. unstaged_files)
         end
         if staged_files > 0 then
-            table.insert(file_parts, 'S' .. staged_files)
+            table.insert(file_parts, '' .. staged_files)
         end
         table.insert(result_parts, table.concat(file_parts, ''))
     end
