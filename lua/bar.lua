@@ -468,17 +468,17 @@ local FileGitStatus = function(bufnr)
         table.insert(result_parts, string.format('~%d+%d-%d', modified, net_added, net_removed))
     end
 
-    -- Parte de commits: ^AvBu (agora vem do cache separado)
+    -- Parte de commits: ↑A↓B (agora vem do cache separado)
     if ahead > 0 or behind > 0 then
         local commit_parts = {}
         if ahead > 0 then
-            table.insert(commit_parts, 'A' .. ahead)
+            table.insert(commit_parts, '↑' .. ahead)
         end
         if behind > 0 then
-            table.insert(commit_parts, 'B' .. behind)
+            table.insert(commit_parts, '↓' .. behind)
         end
         if #commit_parts > 0 then
-            table.insert(result_parts, '↑' .. table.concat(commit_parts, '↓'))
+            table.insert(result_parts, table.concat(commit_parts, ''))
         end
     end
 
