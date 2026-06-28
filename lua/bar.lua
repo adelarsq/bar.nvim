@@ -465,17 +465,17 @@ local FileGitStatus = function(bufnr)
 
     -- Parte do arquivo atual: ~C+A-R
     if modified > 0 or net_added > 0 or net_removed > 0 then
-        table.insert(result_parts, string.format('~%d+%d-%d', modified, net_added, net_removed))
+        table.insert(result_parts, string.format('%%#Changed#~%d%%#Added#+%d%%#Removed#-%d%%#Normal#', modified, net_added, net_removed))
     end
 
     -- Parte de commits: ↑A↓B (agora vem do cache separado)
     if ahead > 0 or behind > 0 then
         local commit_parts = {}
         if ahead > 0 then
-            table.insert(commit_parts, '↑' .. ahead)
+            table.insert(commit_parts, '%#Directory#↑' .. ahead .. '%#Normal#')
         end
         if behind > 0 then
-            table.insert(commit_parts, '↓' .. behind)
+            table.insert(commit_parts, '%#Directory#↓' .. behind .. '%#Normal#')
         end
         if #commit_parts > 0 then
             table.insert(result_parts, table.concat(commit_parts, ''))
@@ -486,10 +486,10 @@ local FileGitStatus = function(bufnr)
     if unstaged_files > 0 or staged_files > 0 then
         local file_parts = {}
         if unstaged_files > 0 then
-            table.insert(file_parts, '' .. unstaged_files)
+            table.insert(file_parts, '%#Special#󰡯' .. unstaged_files .. '%#Normal#')
         end
         if staged_files > 0 then
-            table.insert(file_parts, '' .. staged_files)
+            table.insert(file_parts, '%#Added#󰈖' .. staged_files .. '%#Normal#')
         end
         table.insert(result_parts, table.concat(file_parts, ''))
     end
@@ -665,7 +665,7 @@ function M.activeLine(bufnr)
     if vim.g.bar_enable_git_status then
         local file_git = FileGitStatus(bufnr)
         if file_git ~= '' then
-            sl = sl .. ' ' .. file_git .. blank
+            sl = sl .. '%#Special# %#Normal#' .. file_git .. blank
         end
     end
 
